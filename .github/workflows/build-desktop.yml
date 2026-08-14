@@ -412,6 +412,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Needed to mint the OIDC token exchanged for AWS credentials below —
+      # no long-lived AWS access keys stored as repo secrets.
+      id-token: write
     steps:
       - name: Download all platform bundles
         uses: actions/download-artifact@v4
@@ -467,6 +470,21 @@ jobs:
 
           echo "---- release-assets ----"
           ls -lah release-assets/
+
+      # Keeps a permanent copy of every release's installers in S3, separate
+      # from GitHub Releases (which is the public download surface). Uses
+      # OIDC to assume a role scoped to only this repo's v* tag pushes and
+      # only s3:PutObject under releases/ in this bucket — see
+      # infra/github-actions/release-s3-role.yaml.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::120569613427:role/minutes-client-github-release-s3
+          aws-region: eu-west-1
+
+      - name: Archive release binaries to S3
+        run: |
+          aws s3 cp release-assets/ "s3://version-release-bucket/releases/${{ github.ref_name }}/" --recursive
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
