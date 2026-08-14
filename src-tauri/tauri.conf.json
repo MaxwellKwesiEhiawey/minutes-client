@@ -33,6 +33,11 @@
       "bundleName": "Minutes",
       "entitlements": "Entitlements.plist"
     },
+    "windows": {
+      "wix": {
+        "upgradeCode": "7D45BA4E-E0CB-505F-A3CC-1DF0397397ED"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
