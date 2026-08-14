@@ -322,7 +322,7 @@ jobs:
         env:
           DESKSEC_API_URL: ${{ vars.DESKSEC_API_URL }}
           DESKSEC_TOKEN: ${{ secrets.DESKSEC_TOKEN }}
-          DESKSEC_OTLP_TOKEN: ${{ secrets.DESKSEC_OTLP_TOKEN }}
+        #  DESKSEC_OTLP_TOKEN: ${{ secrets.DESKSEC_OTLP_TOKEN }}
         shell: bash
         run: |
           is_release=false
@@ -353,12 +353,7 @@ jobs:
           # build.rs trims the secret before embedding it, so whitespace-only
           # values must be treated as missing here as well.
           if [[ -z "${DESKSEC_OTLP_TOKEN//[[:space:]]/}" ]]; then
-            if [ "$is_release" = true ]; then
-              echo "::error title=DESKSEC_OTLP_TOKEN::Release build requires repository secret DESKSEC_OTLP_TOKEN (Settings > Secrets and variables > Actions > Secrets)."
-              missing=1
-            else
-              echo "::warning title=DESKSEC_OTLP_TOKEN::Repository secret DESKSEC_OTLP_TOKEN is empty — dev/PR builds will have telemetry switched off."
-            fi
+            echo "::warning title=DESKSEC_OTLP_TOKEN::Repository secret DESKSEC_OTLP_TOKEN is empty — telemetry is muted in CI for now."
           else
             echo "DESKSEC_OTLP_TOKEN is set (length ${#DESKSEC_OTLP_TOKEN})"
           fi
@@ -372,10 +367,8 @@ jobs:
           # the token is seeded into the OS keychain on first launch.
           DESKSEC_API_URL: ${{ vars.DESKSEC_API_URL }}
           DESKSEC_TOKEN: ${{ secrets.DESKSEC_TOKEN }}
-          # This shared Grafana write token is intentionally embedded for the
-          # current internal-only, VPN-distributed app. It is extractable from
-          # the binary, so rotate it if an installer leaves that trust boundary.
-          DESKSEC_OTLP_TOKEN: ${{ secrets.DESKSEC_OTLP_TOKEN }}
+          # DESKSEC_OTLP_TOKEN intentionally omitted to mute telemetry in CI.
+          # If you later want telemetry enabled, re-add DESKSEC_OTLP_TOKEN here.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Certificate is imported in the step above; pass identity only so Tauri uses the
