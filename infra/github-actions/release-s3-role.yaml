@@ -1,0 +1,61 @@
+# IAM role that GitHub Actions assumes (via OIDC — no stored AWS credentials)
+# to upload release installers to S3. Used by the `release` job in
+# .github/workflows/build-desktop.yml, which runs only on `v*` tag pushes.
+#
+# Prerequisite: an IAM OIDC provider for token.actions.githubusercontent.com
+# must already exist in this account (one usually does per-account, shared
+# across repos/roles — this template does not create it, only references it).
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  IAM role for GitHub Actions (OIDC) to upload minutes-client release
+  binaries to S3.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: MaxwellKwesiEhiawey
+  GitHubRepo:
+    Type: String
+    Default: minutes-client
+  ArtifactBucketName:
+    Type: String
+    Default: version-release-bucket
+  ReleasePrefix:
+    Type: String
+    Default: releases/
+    Description: >-
+      S3 key prefix release binaries are uploaded under, kept separate from
+      the CodePipeline artifact-store's own internal object keys in the same
+      bucket.
+
+Resources:
+  GitHubReleaseUploadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${GitHubRepo}-github-release-s3"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              # Scoped to tag pushes only — this role has no reason to be
+              # assumable from a branch push or PR run.
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/tags/v*"
+      Policies:
+        - PolicyName: upload-release-binaries
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${ArtifactBucketName}/${ReleasePrefix}*"
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt GitHubReleaseUploadRole.Arn
