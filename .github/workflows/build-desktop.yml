@@ -1,0 +1,493 @@
+name: Build Minutes Desktop App
+# Re-run trigger: verifying Apple signing/notarization setup + macOS cache-key fix.
+
+on:
+  push:
+    branches: [main, develop, staging]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: build-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast, dependency-light gates. Run on every push/PR before the heavy native
+  # build so obvious regressions fail in ~1 minute instead of ~30.
+  frontend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Audit production dependencies
+        # Dev-only tooling (vite/vitest/esbuild) is never shipped in the Tauri
+        # bundle, so only production deps are audited. Blocking: a high/critical
+        # finding fails the job (previously this only posted a warning
+        # annotation and always exited 0, so a real CVE could never stop a
+        # merge). Use `npm audit --omit=dev` locally to reproduce/triage.
+        run: |
+          npm audit --omit=dev --audit-level=high || {
+            echo "::error title=npm audit::High/critical CVE(s) found in production dependencies — run 'npm audit --omit=dev' locally, then 'npm audit fix' or bump the affected package.";
+            exit 1;
+          }
+
+  rust-checks:
+    # Pinned to 24.04 (not 22.04/"ubuntu-latest"), specifically because
+    # minutes-core enables cpal's "pipewire" feature, which pulls in
+    # libspa-sys/pipewire-sys 0.10.x. Those crates bindgen their FFI layer
+    # against whatever libspa-0.2-dev/libpipewire-0.3-dev headers are
+    # installed on the runner, and libspa-sys 0.10.x's code assumes PipeWire
+    # >= 0.3.65 (spa_meta_region_is_valid, spa_meta_first, and a `flags`
+    # field on spa_video_info_raw were all added at/after that version).
+    # Ubuntu 22.04 (jammy) ships PipeWire 0.3.48 — below that line, so the
+    # build fails with "cannot find function" / "no field" errors that look
+    # like a Rust dependency mismatch but are actually a too-old system
+    # library. Ubuntu 24.04 (noble) ships PipeWire 1.0.5, which is new
+    # enough. See CONTRIBUTING.md for the broader vendored-minutes-core
+    # version-coupling context this falls under.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake clang libclang-dev \
+            libasound2-dev libssl-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsecret-1-dev \
+            libpipewire-0.3-dev libspa-0.2-dev
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+      - name: rustfmt (check)
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: clippy (deny warnings)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test
+      - name: cargo-audit
+        # Blocking on an actual advisory (previously this always exited 0 via
+        # `|| echo`, so a real RustSec finding could never fail CI). Installing
+        # the cargo-audit *tool* itself stays best-effort — a registry hiccup
+        # installing tooling is a CI-infra concern, not a code-security one —
+        # but if the tool is available, a finding fails the job.
+        #
+        # working-directory is required: Cargo.toml/Cargo.lock live in
+        # src-tauri/, not the repo root. This step originally lacked it (the
+        # rustfmt/clippy/test steps above always had it), so `cargo audit`
+        # ran from the repo root and failed with "Couldn't load Cargo.lock" —
+        # a tool-level I/O error, not a security finding, that the old
+        # unconditional `::error ... RustSec advisory found` message
+        # misreported as one. Output is now captured and inspected so a
+        # future failure of this kind reports honestly instead of crying wolf.
+        #
+        # The shell runs with `bash -e`: a bare `VAR="$(cmd)"` assignment is
+        # itself a "simple command" whose exit status is cmd's exit status,
+        # so if cargo audit finds an advisory (exit 1) and this isn't
+        # shielded, `-e` kills the script on that line *before* AUDIT_STATUS
+        # or the echo below ever run — which is exactly what happened here
+        # (the log jumped straight from "Installed package cargo-audit" to
+        # "Process completed with exit code 1" with zero audit output).
+        # `set +e` / `set -e` around the capture prevents that.
+        working-directory: src-tauri
+        run: |
+          cargo install cargo-audit --locked || true
+          if cargo audit --version >/dev/null 2>&1; then
+            set +e
+            AUDIT_OUTPUT="$(cargo audit 2>&1)"
+            AUDIT_STATUS=$?
+            set -e
+            echo "$AUDIT_OUTPUT"
+            if [ "$AUDIT_STATUS" -ne 0 ]; then
+              if echo "$AUDIT_OUTPUT" | grep -qi "Couldn't load Cargo.lock\|error: not found"; then
+                echo "::error title=cargo audit::cargo audit failed to run (couldn't load Cargo.lock) rather than reporting an advisory — this usually means the step's working-directory is wrong. Run 'cargo audit' from src-tauri/ locally to reproduce.";
+              else
+                echo "::error title=cargo audit::RustSec advisory found in the dependency tree — run 'cargo audit' in src-tauri locally to see details and remediation.";
+              fi
+              exit 1;
+            fi
+          else
+            echo "::warning title=cargo audit::Could not install cargo-audit this run; skipping (CI tooling issue, not a code finding)."
+          fi
+
+  build:
+    needs: [frontend-checks, rust-checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-aarch64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            artifact: macos-x86_64
+          # 24.04, not 22.04 — see the comment on rust-checks' runs-on above
+          # (PipeWire/libspa version needed by the pipewire-rs crates pulled
+          # in via minutes-core's cpal "pipewire" feature).
+          - platform: ubuntu-24.04
+            target: ""
+            artifact: linux
+          - platform: windows-latest
+            target: ""
+            artifact: windows
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # whisper-rs-sys's build.rs (via the `cmake` crate) bakes the *absolute
+      # path* to the detected clang/compiler-rt libraries into a cached
+      # CMakeCache.txt under target/ at configure time (e.g.
+      # ".../XcodeDefault.xctoolchain/usr/lib/clang/17/lib/darwin"). When
+      # GitHub bumps the macOS runner image's Xcode/clang version, the
+      # swatinem/rust-cache-restored target/ dir still has the OLD path
+      # baked in, CMake skips reconfiguring since Cargo.lock/toolchain didn't
+      # change, and the final link fails with "ld: library 'clang_rt.osx'
+      # not found" / "search path ... not found" because that clang version
+      # subdirectory no longer exists on the new image. Recording the
+      # installed Xcode version here and feeding it into the cache key below
+      # makes an Xcode bump naturally invalidate the cache instead of
+      # silently reusing incompatible native build artifacts.
+      - name: Record Xcode version for cache key (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: echo "CACHE_XCODE_VERSION=$(xcodebuild -version | tr '\n' '_')" >> "$GITHUB_ENV"
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          env-vars: CACHE_XCODE_VERSION DESKSEC_API_URL DESKSEC_TOKEN
+          # Bumped to invalidate a currently-poisoned cache (stale
+          # .../lib/clang/17/lib/darwin path from before Xcode-version
+          # tracking existed). Safe to leave in place going forward.
+          prefix-key: "v2-rust"
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            clang \
+            libclang-dev \
+            curl \
+            file \
+            ffmpeg \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            libpipewire-0.3-dev \
+            librsvg2-dev \
+            libsecret-1-dev \
+            libspa-0.2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      # whisper.cpp (via whisper-rs) needs cmake; pyannote-rs bindgen needs LLVM.
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Install LLVM (Windows — libclang for whisper-rs/pyannote bindgen)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          choco install llvm -y
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # https://v2.tauri.app/distribute/sign/macos/#signing-in-cicd-platforms
+      - name: Import Apple Developer Certificate
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          SIGNING_IDENTITY="-"
+
+          # Treat unset, empty, AND whitespace-only as "not configured": a
+          # secret set to e.g. a stray newline is non-empty by byte length
+          # (so a plain `[ -z "$APPLE_CERTIFICATE" ]` check doesn't catch
+          # it), but has no actual base64 payload once whitespace is
+          # stripped — that previously reached `base64 --decode` and failed
+          # the whole job with a cryptic "error decoding base64 input
+          # stream" instead of falling back to ad-hoc signing as intended.
+          APPLE_CERTIFICATE_TRIMMED="$(printf '%s' "$APPLE_CERTIFICATE" | tr -d '[:space:]')"
+
+          if [ -z "$APPLE_CERTIFICATE_TRIMMED" ]; then
+            echo "No APPLE_CERTIFICATE secret configured; macOS build will use ad-hoc signing."
+          else
+            KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-$(openssl rand -base64 32)}"
+            CERT_PATH="$RUNNER_TEMP/certificate.p12"
+            KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
+            # Guarded (not a bare `-e`-tripping command): a secret that's
+            # present but not valid base64 (bad copy/paste, wrong file,
+            # extra quoting) should fall back to ad-hoc signing with a
+            # clear, actionable warning, not abort the whole build.
+            if ! echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH" 2>/tmp/apple_cert_decode_err; then
+              echo "::warning title=Apple signing::APPLE_CERTIFICATE secret is set but is not valid base64 — falling back to ad-hoc signing. Re-generate it with 'base64 -i YourCert.p12 | pbcopy' (macOS) or 'base64 -w0 YourCert.p12' (Linux) and paste the full output as-is, with no surrounding quotes."
+              cat /tmp/apple_cert_decode_err || true
+            else
+              security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+              security default-keychain -s "$KEYCHAIN_PATH"
+              security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+              security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
+              security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+              security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+              security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+              echo "Available signing identities:"
+              security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+              # NOTE: "Developer ID Application"/"Developer ID Installer" identities
+              # are named WITHOUT an "Apple " prefix (unlike "Apple Development" /
+              # "Apple Distribution"), so the alternation must be grouped correctly
+              # or a valid Developer ID identity is silently never matched.
+              CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -E '(Apple Development|Apple Distribution|Developer ID Application)' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+              if [ -z "$CERT_ID" ]; then
+                echo "::warning title=Apple signing::Certificate imported but no codesigning identity was found — falling back to ad-hoc signing. Check that the .p12 actually contains a code-signing certificate (not just a plain TLS cert) and that APPLE_CERTIFICATE_PASSWORD matches it."
+              else
+                SIGNING_IDENTITY="$CERT_ID"
+                echo "Using signing identity: $SIGNING_IDENTITY"
+              fi
+            fi
+          fi
+
+          echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+          # Tauri notarizes when APPLE_ID + APPLE_PASSWORD (+ TEAM_ID) are set, even as empty
+          # strings in the workflow env block. Only export them when fully configured.
+          if [ "$SIGNING_IDENTITY" = "-" ]; then
+            echo "Skipping notarization (ad-hoc signing; set APPLE_CERTIFICATE for release builds)."
+          elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ ${#APPLE_TEAM_ID} -ge 3 ]; then
+            echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+            echo "Notarization enabled."
+          else
+            echo "Skipping notarization (set APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID to enable)."
+          fi
+
+      # Confirms build configuration actually reaches this job before spending
+      # a full build on it. Only prints length/scheme, never raw values.
+      - name: Check CI server config
+        env:
+          DESKSEC_API_URL: ${{ vars.DESKSEC_API_URL }}
+          DESKSEC_TOKEN: ${{ secrets.DESKSEC_TOKEN }}
+          DESKSEC_OTLP_TOKEN: ${{ secrets.DESKSEC_OTLP_TOKEN }}
+        shell: bash
+        run: |
+          is_release=false
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            is_release=true
+          fi
+          missing=0
+          if [ -z "$DESKSEC_API_URL" ]; then
+            if [ "$is_release" = true ]; then
+              echo "::error title=DESKSEC_API_URL::Release build requires repository variable DESKSEC_API_URL (Settings > Secrets and variables > Actions > Variables)."
+              missing=1
+            else
+              echo "::warning title=DESKSEC_API_URL::Repository variable DESKSEC_API_URL is empty — dev/PR builds will have no embedded server URL."
+            fi
+          else
+            echo "DESKSEC_API_URL is set (length ${#DESKSEC_API_URL}, scheme: $(echo "$DESKSEC_API_URL" | cut -d: -f1))"
+          fi
+          if [[ -z "${DESKSEC_TOKEN//[[:space:]]/}" ]]; then
+            if [ "$is_release" = true ]; then
+              echo "::error title=DESKSEC_TOKEN::Release build requires repository secret DESKSEC_TOKEN (Settings > Secrets and variables > Actions > Secrets)."
+              missing=1
+            else
+              echo "::warning title=DESKSEC_TOKEN::Repository secret DESKSEC_TOKEN is empty — dev/PR builds will have no embedded server token."
+            fi
+          else
+            echo "DESKSEC_TOKEN is set (length ${#DESKSEC_TOKEN})"
+          fi
+          # build.rs trims the secret before embedding it, so whitespace-only
+          # values must be treated as missing here as well.
+          if [[ -z "${DESKSEC_OTLP_TOKEN//[[:space:]]/}" ]]; then
+            if [ "$is_release" = true ]; then
+              echo "::error title=DESKSEC_OTLP_TOKEN::Release build requires repository secret DESKSEC_OTLP_TOKEN (Settings > Secrets and variables > Actions > Secrets)."
+              missing=1
+            else
+              echo "::warning title=DESKSEC_OTLP_TOKEN::Repository secret DESKSEC_OTLP_TOKEN is empty — dev/PR builds will have telemetry switched off."
+            fi
+          else
+            echo "DESKSEC_OTLP_TOKEN is set (length ${#DESKSEC_OTLP_TOKEN})"
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Build Tauri app
+        env:
+          # Server URL + token are baked into the internal release binary and
+          # the token is seeded into the OS keychain on first launch.
+          DESKSEC_API_URL: ${{ vars.DESKSEC_API_URL }}
+          DESKSEC_TOKEN: ${{ secrets.DESKSEC_TOKEN }}
+          # This shared Grafana write token is intentionally embedded for the
+          # current internal-only, VPN-distributed app. It is extractable from
+          # the binary, so rotate it if an installer leaves that trust boundary.
+          DESKSEC_OTLP_TOKEN: ${{ secrets.DESKSEC_OTLP_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Certificate is imported in the step above; pass identity only so Tauri uses the
+          # keychain entry instead of re-running `security import` (which fails on CI).
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY || secrets.APPLE_SIGNING_IDENTITY }}
+        run: npm run tauri build -- ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: minutes-${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.app
+            src-tauri/target/**/release/bundle/**/*.deb
+            src-tauri/target/**/release/bundle/**/*.AppImage
+            src-tauri/target/**/release/bundle/**/*.rpm
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*.exe
+
+  # Public downloads: push a semver tag (v0.1.0, v1.2.3, …) on a commit that
+  # contains this workflow. After the matrix builds succeed, this job publishes
+  # a GitHub Release with macOS / Linux / Windows installers attached so anyone
+  # can download them from the repo's Releases page — no OneDrive/manual copy.
+  #
+  # All four matrix legs must succeed (Apple Silicon + Intel macOS, Linux,
+  # Windows). fail-fast is false so a flaky leg doesn't cancel siblings, but
+  # `needs: build` still blocks this job until every leg is green — we never
+  # ship a half-platform public release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all platform bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: bundles
+          pattern: minutes-*
+          merge-multiple: false
+
+      - name: Collect public installer assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          mapfile -t files < <(
+            find bundles -type f \( \
+              -name '*.dmg' -o \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.rpm' -o \
+              -name '*.msi' -o \
+              -name '*.exe' \
+            \) | sort
+          )
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error title=release assets::No installer files found under bundles/. Check that each matrix build uploaded minutes-* artifacts."
+            find bundles -type f | head -100 || true
+            exit 1
+          fi
+
+          has_mac=$(printf '%s\n' "${files[@]}" | grep -cE '\.dmg$' || true)
+          has_linux=$(printf '%s\n' "${files[@]}" | grep -cE '\.(deb|AppImage|rpm)$' || true)
+          has_win=$(printf '%s\n' "${files[@]}" | grep -cE '\.(msi|exe)$' || true)
+          echo "Installer counts — macOS(dmg)=$has_mac linux=$has_linux windows=$has_win"
+
+          if [ "$has_mac" -lt 1 ] || [ "$has_linux" -lt 1 ] || [ "$has_win" -lt 1 ]; then
+            echo "::error title=release assets::Public release requires at least one macOS (.dmg), Linux (.deb/.AppImage/.rpm), and Windows (.msi/.exe) installer."
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+
+          for f in "${files[@]}"; do
+            base="$(basename "$f")"
+            dest="release-assets/${base}"
+            if [ -e "$dest" ]; then
+              parent="$(basename "$(dirname "$f")")"
+              dest="release-assets/${parent}-${base}"
+            fi
+            cp "$f" "$dest"
+            echo "asset: ${dest} ($(du -h "$dest" | awk '{print $1}'))"
+          done
+
+          echo "---- release-assets ----"
+          ls -lah release-assets/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Public immediately — anyone with the Releases URL can download.
+          draft: false
+          make_latest: true
+          generate_release_notes: true
+          files: release-assets/*
+          body: |
+            ## Minutes `${{ github.ref_name }}`
+
+            Cross-platform installers from CI. Pick the file for your OS/CPU:
+
+            | Platform | What to download |
+            | --- | --- |
+            | **macOS (Apple Silicon)** | `.dmg` with `aarch64` / `apple-silicon` in the name |
+            | **macOS (Intel)** | `.dmg` with `x64` / `x86_64` in the name |
+            | **Linux** | `.AppImage` (portable), `.deb` (Debian/Ubuntu), or `.rpm` |
+            | **Windows** | `.msi` (preferred) or `.exe` |
+
+            ### Notes
+            - macOS builds need a valid Developer ID + notarization for Gatekeeper-friendly installs. Ad-hoc signed CI builds may require **Right-click → Open** the first time.
+            - Server URL and bearer token are baked in at CI build time (`DESKSEC_API_URL` variable + `DESKSEC_TOKEN` secret) and seeded into the OS keychain on first launch.

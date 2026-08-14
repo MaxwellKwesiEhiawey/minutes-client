@@ -1,0 +1,309 @@
+[package]
+name = "desksec"
+version = "0.1.0"
+description = "Minutes - bot-free meeting recorder with on-device transcription and AI summary"
+authors = ["you"]
+edition = "2021"
+autobins = false
+default-run = "Minutes"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "desksec_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async runtime (Tauri already pulls tokio, we use it explicitly)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# HTTP client for the Minutes summarization server + model downloads. rustls
+# avoids a system OpenSSL dependency.
+#
+# Pinned to the 0.13 line (not 0.12) specifically to match what `tauri` 2.11.x
+# itself already pulls in — without this, cargo resolves two separate reqwest
+# major versions into one binary (0.12.x for our own use, 0.13.x for Tauri's
+# internal use), which is unnecessary binary bloat and a latent source of
+# behavioral inconsistency between the two HTTP stacks. Note reqwest renamed
+# the TLS feature from `rustls-tls` (0.12) to `rustls` (0.13) — see
+# https://docs.rs/reqwest/0.13.4 "Optional Features".
+#
+# NOT verified with a local `cargo build` (see CONTRIBUTING.md) — please run
+# `cargo check` after pulling this change, in case 0.13 introduced an API
+# change beyond the feature rename that affects summary.rs/local_transcribe.rs.
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
+
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+
+# Direct dependency only so we can call `CryptoProvider::install_default()` in
+# `run()`. reqwest pulls rustls with `aws-lc-rs` while tokio-tungstenite pulls
+# it with `ring`; Cargo unifies both features onto the single rustls 0.23
+# instance, so rustls cannot pick a process default on its own and every TLS
+# handshake fails with "Could not automatically determine the process-level
+# CryptoProvider". Installing one explicitly at startup settles it. Keep this
+# on 0.23 so it unifies with that same instance instead of adding a second one.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
+# Local storage, with application-level at-rest encryption via SQLCipher
+# (see db.rs's `open()` for the key management + plaintext-to-encrypted
+# migration). Pinned to 0.33 to match the vendored `minutes-core`'s own
+# `rusqlite = { version = "0.33", features = ["bundled"] }` (see
+# minutes/Cargo.toml), so both resolve to the SAME `rusqlite`/`libsqlite3-sys`
+# instance rather than two conflicting ones (`libsqlite3-sys` declares
+# `links = "sqlite3"`, and Cargo only allows one crate instance per `links`
+# key in a build).
+#
+# `bundled-sqlcipher` and `bundled` are NOT a hard conflict the way two
+# different crates both declaring `links = "sqlite3"` would be — they're the
+# same crate/version, so Cargo unifies the feature set as a union, and
+# rusqlite's own build.rs documents that when both are requested,
+# `bundled-sqlcipher` takes priority for backwards compatibility (`bundled`
+# is silently ignored). That means minutes-core's own `rusqlite` usage
+# (context_store.rs / graph.rs / overlays.rs) keeps working unmodified,
+# linked against the SQLCipher build instead of vanilla SQLite — since those
+# databases are opened without `PRAGMA key`, SQLCipher treats them as
+# ordinary unencrypted SQLite files (this is documented SQLCipher behavior:
+# it is a superset of SQLite, and a connection with no key set behaves
+# exactly like vanilla SQLite against an unencrypted file).
+#
+# `bundled-sqlcipher` alone links SQLCipher against *system* OpenSSL (via
+# libsqlite3-sys's build.rs, which panics if `OPENSSL_DIR` isn't set to a
+# discoverable install). That's fine on Linux/macOS CI where OpenSSL dev
+# headers are either already present or easy to find, but GitHub's Windows
+# runners have no system OpenSSL at all — the Windows build failed with
+# "Missing environment variable OPENSSL_DIR". `bundled-sqlcipher-vendored-openssl`
+# fixes this by building OpenSSL from source as part of the Cargo build
+# (via openssl-sys's `vendored` feature) instead of requiring one to already
+# be installed — GitHub's hosted Windows/macOS/Linux runner images all ship
+# the Perl + C toolchain that OpenSSL's build needs, with no extra CI setup.
+#
+# NOT verified with a local `cargo build` (see CONTRIBUTING.md). If this
+# genuinely does not build (e.g. a version-specific issue not visible from
+# reading the rusqlite source/docs alone), that's a real conflict worth
+# reporting rather than working around blindly.
+rusqlite = { version = "0.33", features = ["bundled-sqlcipher-vendored-openssl"] }
+
+# Cross-platform audio capture (microphone / input device). Pinned to 0.18.1 to
+# match the vendored `minutes-core` so a single cpal links the native `alsa`.
+cpal = "0.18.1"
+# WAV encoding for on-device transcription chunks.
+hound = "3.5"
+
+# SHA256 verification for downloaded whisper model weights (catches same-size corruption).
+sha2 = "0.10"
+
+# HTTP Basic credentials for the Grafana Cloud OTLP gateway (telemetry.rs).
+# Already resolved at 0.22.1 transitively, so this direct edge adds no new
+# crate and no new version to the graph.
+base64 = "0.22"
+
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "1"
+
+# Coarse OS version (`os.version`) for telemetry resource attributes — see
+# docs/TELEMETRY.md. Only major.minor ever leaves the device; full build
+# strings are deliberately discarded (they are close to unique in a small
+# population).
+#
+# Chosen over hand-rolled per-platform readers after checking CONTRIBUTING.md's
+# pinning rules: `os_info` declares no `links` key, so it cannot collide with
+# the load-bearing `ort` / `rusqlite` / `cpal` pins, and every one of its
+# transitive dependencies that Minutes's graph already contains resolves to the
+# SAME version it already had (`objc2` 0.6.4, `objc2-foundation` 0.3.2,
+# `objc2-core-foundation` 0.3.2, `block2` 0.6.2, `log` 0.4.33, `windows-sys`
+# 0.61.2, `windows-link`). The only genuinely new crate is `nix` on
+# Linux/BSD — pure FFI bindings, no build script, no native library.
+# `default-features = false` drops its optional `serde` derive, which we do
+# not need (the value is read once at startup and formatted by hand).
+os_info = { version = "3", default-features = false }
+
+# Structured logging, replacing ad-hoc eprintln!/println! calls. Pinned to
+# "0.1" (not a specific patch) so cargo unifies with the `tracing 0.1.44`
+# already resolved transitively via the vendored `minutes-core` dependency
+# chain, rather than risking two incompatible major-version instances.
+# tracing-appender gives a rotating daily log file; tracing-subscriber's
+# "env-filter" feature lets the level be overridden via a DESKSEC_LOG env var.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+dotenvy = "0.15.7"
+docx-rs = "0.4.20"
+dirs = "6"
+# On Linux the backend must be the Secret Service (gnome-keyring / KWallet),
+# NOT `linux-native`. `linux-native` selects kernel keyutils, which stores keys
+# in the session keyring (`_ses`) — kernel memory that is destroyed at logout
+# and never survives a reboot. That is correct for Kerberos tickets and dm-crypt
+# keys, and wrong for the `desksec.db` SQLCipher passphrase, which has to outlive
+# every login session for as long as the database file exists. With keyutils the
+# passphrase was lost on every reboot, leaving an encrypted database no key could
+# open (see `db::open`).
+#
+# `async-secret-service` is a pure-Rust stack (secret-service v4 over zbus v4),
+# so it needs no libdbus C library at build time and adds nothing to the CI apt
+# list. Despite the feature name, keyring's `Entry` API stays synchronous — the
+# feature only selects which D-Bus implementation is used internally — so call
+# sites in `secrets.rs` are unchanged. `crypto-rust` keeps the Secret Service
+# session encryption off OpenSSL for the same portability reason.
+keyring = { version = "3", features = [
+    "apple-native",
+    "windows-native",
+    "async-secret-service",
+    "tokio",
+    "crypto-rust",
+] }
+
+# Native message dialogs for fatal startup failures. This has to be `rfd`
+# directly rather than `tauri_plugin_dialog`, because the failures it reports
+# happen while the Tauri app is still being built — there is no `AppHandle` to
+# hang a plugin dialog off yet. Already in the dependency tree (tauri-plugin-dialog
+# uses it internally), so this pulls in nothing new.
+#
+# `default-features = false` + `gtk3` is required, not cosmetic: rfd's defaults
+# turn on `xdg-portal`, and its build script hard-errors when `gtk3` and
+# `xdg-portal` are both enabled. tauri-plugin-dialog already selects `gtk3`, and
+# cargo unifies features across the whole graph, so anything else fails the
+# build. On macOS and Windows `gtk3` is inert — rfd gates its GTK dependencies
+# on Linux/BSD targets and uses the native Cocoa and Win32 dialogs there.
+rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
+
+# Crash-safe temp files for on-device diarization audio chunks: NamedTempFile
+# creates them with restrictive (0600) permissions and removes them on drop even
+# on panic/early return, so a plaintext audio fragment is never left in shared /tmp.
+tempfile = "3"
+
+# Local (on-device) transcription + diarization engine, vendored from the
+# silverstein/minutes monorepo under ../minutes. Whisper (whisper.cpp) does the
+# speech-to-text; pyannote-rs does speaker diarization. No audio ever leaves the
+# device for transcription.
+minutes-core = { path = "../minutes/crates/core", default-features = false, features = ["whisper", "diarize"] }
+
+# Pin ONNX Runtime to the exact version the vendored Minutes workspace locks.
+# `pyannote-rs 0.3.4` does not compile against newer `ort` release-candidates
+# (they made `OrtCustomOpDomain` !Send/!Sync), and because our crate resolves
+# `ort` outside the Minutes workspace, cargo would otherwise pick a newer rc.
+ort = { version = "=2.0.0-rc.10", features = ["ndarray"] }
+
+# Windows' Default *Communication* Device is a separate assignment from the
+# Default Device, and it is the one headsets get and every call app uses. cpal
+# only ever resolves `eConsole` (see its `current_default_endpoint`), so reading
+# the communications endpoint needs Core Audio directly.
+#
+# Pinned to 0.62 to match the `windows` that cpal already resolves — see the
+# `[patch.crates-io]` note at the bottom of this file. Same crate and version, a
+# subset of cpal's features, so cargo unifies rather than building a second copy.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Devices_Properties",
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+    # The share flyout (see share.rs). `Win32_UI_Shell`, where
+    # `IDataTransferManagerInterop` lives, is already implied by
+    # `Win32_UI_Shell_PropertiesSystem` above.
+    "ApplicationModel_DataTransfer",
+    "Storage",
+    # `StorageFile` itself is gated behind `Storage_Streams`, not `Storage`.
+    "Storage_Streams",
+    "Foundation",
+    "Foundation_Collections",
+] }
+
+# `IIterable` (for `DataPackage::SetStorageItems`) and the `IntoFuture` impl for
+# `IAsyncOperation` (for `StorageFile::GetFileFromPathAsync`) live in these two
+# crates. `windows` 0.62.2 depends on both unconditionally but re-exports only
+# `windows_core`, so reaching the types by name needs them declared here. Same
+# versions the resolver already picked for `windows` itself, so cargo unifies —
+# these add nothing to the tree, they only make it nameable.
+windows-collections = "0.3"
+windows-future = "0.3"
+
+# Accelerate whisper.cpp with Apple Metal on macOS (matches Minutes' release
+# builds). Cargo unions this feature onto the base dependency above.
+[target.'cfg(target_os = "macos")'.dependencies]
+minutes-core = { path = "../minutes/crates/core", features = ["metal"] }
+
+# AppKit, for the native share sheet (`NSSharingServicePicker`, see share.rs).
+# Pinned to the versions Tauri's own windowing stack (tao/wry) already resolves,
+# so cargo unifies rather than adding a second copy — these are not new crates in
+# the tree, only newly declared.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "alloc",
+    "NSSharingService",
+    "NSView",
+    "NSWindow",
+    "NSResponder",
+    "NSGraphics",
+] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSURL"] }
+
+# AVFoundation, for the real microphone authorization state used by the
+# first-run permission onboarding (see permissions.rs). Reading the status needs
+# only `AVCaptureDevice` + `AVMediaFormat`, which the vendored `minutes-core`
+# already enables; *requesting* it needs the `block2` feature for the completion
+# handler. Cargo features are additive across the graph and `block2` 0.6.2 is
+# already resolved via cpal, so this enables a method rather than adding crates.
+objc2-av-foundation = { version = "0.3", default-features = false, features = [
+    "AVCaptureDevice",
+    "AVMediaFormat",
+    "block2",
+] }
+block2 = "0.6"
+
+# Test-only. telemetry.rs's spool/retry tests stand up a throwaway loopback
+# HTTP collector so the export path (status classification, spooling on
+# failure, draining on recovery) is exercised end-to-end through `reqwest`
+# rather than against a hand-written mock of itself. That needs tokio's `net`
+# and `io-util` features, which the runtime dependency above does not enable.
+# Same crate and major version, so cargo unions the features instead of
+# resolving a second tokio.
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time"] }
+
+[[bin]]
+name = "Minutes"
+path = "src/main.rs"
+
+# cpal 0.18.1 (crates.io) declares its Windows-only `windows` and `windows-core`
+# dependencies as two independent ">=0.61, <=0.62" ranges. cpal's own code
+# comment says they "must be the same minor version", but that range doesn't
+# enforce it: Tauri's webview stack (tao/wry/webview2-com) pins `windows`
+# tightly to 0.61.x, while `iana-time-zone` (via chrono) needs `windows-core`
+# 0.62.x elsewhere in the graph. Cargo resolves cpal's two edges independently,
+# so cpal ends up with `windows` -> 0.61.3 (re-exporting windows-core 0.61.2)
+# but its own direct `windows-core` dependency -> 0.62.2. The
+# `#[windows::core::implement]` macro then expands against one windows-core
+# instance while the sealed `_Impl` traits arrive via the other, causing
+# "the trait bound `windows_core::Interface` is not satisfied" on Windows CI.
+#
+# This is a confirmed upstream bug: https://github.com/RustAudio/cpal/issues/1242
+# Fixed by the maintainer in https://github.com/RustAudio/cpal/pull/1244,
+# which pins both dependencies to exact "0.62" — but that fix has not shipped
+# in a crates.io release yet (still unreleased past 0.18.1 as of writing).
+# The fix commit only touches Cargo.toml/CI/CHANGELOG, no Rust source, so
+# patching straight to it carries no API-compatibility risk.
+#
+# Remove this patch once a cpal release (0.18.2+) ships the fix.
+#
+# NOT verified with a local `cargo build` (see CONTRIBUTING.md) — no Windows
+# toolchain available here; please confirm the next Windows CI run succeeds.
+[patch.crates-io]
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "a62677dd811e39048e277e214fe22af75ecf6bf0" }

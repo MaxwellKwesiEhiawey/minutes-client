@@ -1,0 +1,44 @@
+# cargo-audit configuration. Read automatically from `.cargo/audit.toml`
+# relative to the directory `cargo audit` is run from — this repo's CI runs
+# it with `working-directory: src-tauri` (see
+# .github/workflows/build-desktop.yml), so this file lives at
+# src-tauri/.cargo/audit.toml, not the repo root.
+#
+# Only ignore individual advisories here with a clear, reviewable reason.
+# Do NOT add a blanket severity threshold or `deny` override to silence
+# future findings — new vulnerabilities should fail CI by default; this file
+# is for specific, currently-unfixable transitive findings only.
+
+[advisories]
+ignore = [
+  # RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quick-xml < 0.41.0 (quadratic
+  # runtime on duplicate-attribute checks; unbounded namespace-declaration
+  # allocation in NsReader -- both parser-side DoS issues).
+  #
+  # Cargo.lock currently resolves TWO copies of quick-xml, both below the
+  # fixed version, from two independent, direct-dependency-controlled chains:
+  #   - quick-xml 0.36.2, pulled in by `docx-rs 0.4.20` (our own dependency,
+  #     used only in src-tauri/src/docx_export.rs). docx-rs 0.4.20 is the
+  #     newest version published on crates.io as of this writing and hard-
+  #     pins `quick-xml = "^0.36"`, so there is no newer docx-rs release yet
+  #     that would pull a fixed quick-xml -- this cannot be resolved by
+  #     bumping our own Cargo.toml until docx-rs itself updates upstream.
+  #   - quick-xml 0.39.4, pulled in by `plist`/`wayland-scanner`, both
+  #     transitive dependencies of `tauri`/`tao` (not something we depend on
+  #     directly) -- same story: waiting on an upstream bump.
+  #
+  # Real-world exposure via our own code is low: docx_export.rs only BUILDS
+  # and WRITES a .docx from Minutes' own in-memory data
+  # (Docx::new()...build().pack(file)) -- it never reads or parses an
+  # externally-supplied .docx/XML file, so quick-xml's vulnerable *parsing*
+  # code path (both advisories are in the reader) is not reachable through
+  # our usage. `plist`/`wayland-scanner`'s exposure is Tauri's concern, not
+  # ours to fix directly.
+  #
+  # Action: re-run `cargo audit` after bumping `docx-rs` or `tauri`/`tao`
+  # (whichever lands a fixed quick-xml first) and remove these two entries
+  # once resolved. Do not leave this ignore in place indefinitely -- check
+  # https://crates.io/crates/docx-rs periodically for a release past 0.4.20.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]

@@ -1,0 +1,21 @@
+[env]
+# whisper.cpp's vendored ggml (pulled in transitively via minutes-core's
+# whisper-rs -> whisper-rs-sys -> CMake build) uses std::filesystem::path,
+# which Apple's libc++ marks unavailable below macOS 10.15. The `cc`/cmake-rs
+# crates default -mmacosx-version-min to 10.13 on some targets, so
+# ggml-backend-reg.cpp fails to compile with "'path' is unavailable:
+# introduced in macOS 10.15" on CI's macOS runners.
+#
+# The vendored minutes/.cargo/config.toml already sets this same var to fix
+# the identical failure when building `minutes-core` standalone from within
+# minutes/ — but Cargo's config discovery only walks up from the current
+# working directory, and never descends into a path-dependency's own
+# directory. Since desksec's build runs with `src-tauri` (not `minutes`) as
+# the crate root, that config.toml is never picked up here, so the same
+# fix needs to be duplicated at this crate root too.
+#
+# 11.0 matches minutes/.cargo/config.toml exactly, so both builds target the
+# same minimum macOS version and link consistently.
+#
+# NOT verified with a local `cargo build` (see CONTRIBUTING.md).
+MACOSX_DEPLOYMENT_TARGET = { value = "11.0", force = true }

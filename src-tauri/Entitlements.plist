@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required under Hardened Runtime (enabled by default by Tauri's macOS
+         bundler, and mandatory for notarization) for the app to access the
+         microphone via cpal/CoreAudio. Without this entitlement, CoreAudio
+         input streams silently fail or are denied by the OS even with
+         NSMicrophoneUsageDescription present in Info.plist and even if the
+         user has granted mic access in System Settings — the entitlement
+         gates whether the process is allowed to ask at all.
+
+         Minutes is NOT sandboxed (com.apple.security.app-sandbox is
+         intentionally absent — this is a Developer ID / non-App-Store build),
+         so no other entitlements are required for network access, file
+         access, etc. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,342 @@
+/* Floating meeting prompt — the card that appears when a call is detected, and
+   for a manual start. Built on the Minutes tokens from ../styles.css; the
+   shared .btn rules are deliberately not reused here, because this window is
+   half the width of a dialog and needs its own tighter control sizes.
+
+   The card is full-bleed: the window is undecorated but opaque, so a rounded
+   outer corner would expose the window's own square corner behind it. Rounded
+   outer corners would need a transparent window, which on macOS means Tauri's
+   `macos-private-api` — not worth a private API for a corner radius. Polish
+   lives in the type, spacing and the accent spine instead. */
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.mp {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-user-select: none;
+  user-select: none;
+  /* The one visible edge: everything else is the OS window shadow. */
+  border: 1px solid var(--line);
+  animation: bf-appear 160ms var(--ease) both;
+}
+
+/* Accent spine, full height. Identity in 3px, and it survives the card being
+   dragged over any background. */
+.mp::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+}
+
+.mp.is-call::before {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--ok) 100%);
+}
+
+/* ---------- Drag strip ---------- */
+
+.mp-strip {
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  /* The affordance for "you can move me". */
+  cursor: grab;
+}
+
+.mp-strip:active {
+  cursor: grabbing;
+}
+
+.mp-mark {
+  flex: none;
+  color: var(--accent);
+}
+
+.mp-wordmark {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.02em;
+  color: var(--brand);
+}
+
+/* Dotted handle, centred in the strip. The whole strip drags; this just says
+   so. Kept narrow — stretched across the full width it read as a divider. */
+.mp-grip {
+  flex: 1;
+  height: 10px;
+  background-image: radial-gradient(var(--faint) 1px, transparent 1px);
+  background-size: 4px 4px;
+  background-position: center;
+  background-repeat: repeat-x;
+  /* Draw the dots over ~44px in the middle and leave the rest clear. */
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent calc(50% - 22px),
+    #000 calc(50% - 22px),
+    #000 calc(50% + 22px),
+    transparent calc(50% + 22px)
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent calc(50% - 22px),
+    #000 calc(50% - 22px),
+    #000 calc(50% + 22px),
+    transparent calc(50% + 22px)
+  );
+  opacity: 0.55;
+  transition: opacity var(--duration-fast) var(--ease);
+}
+
+.mp-strip:hover .mp-grip {
+  opacity: 0.9;
+}
+
+.mp-close {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease);
+}
+
+.mp-close:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.mp-close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- Body ---------- */
+
+.mp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 0;
+}
+
+.mp-body-loading {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.mp-status {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.02em;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mp-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+}
+
+/* Only a detected call is a live event worth pulsing at. */
+.mp.is-call .mp-status-dot {
+  animation: bf-pulse 1600ms ease-in-out infinite;
+}
+
+.mp-title {
+  margin: 10px 0 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: var(--font-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.mp-sub {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.mp-label {
+  margin: 14px 0 5px;
+  font-size: 10px;
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.mp-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+  transition: all var(--duration-fast) var(--ease);
+}
+
+.mp-input::placeholder {
+  color: var(--faint);
+}
+
+.mp-input:hover:not(:disabled) {
+  border-color: var(--border-strong, var(--faint));
+}
+
+.mp-input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--focus-ring);
+}
+
+.mp-input:disabled {
+  opacity: 0.6;
+}
+
+.mp-error {
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--err);
+}
+
+/* ---------- Actions ---------- */
+
+.mp-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 16px 14px;
+}
+
+.mp-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.mp-hint kbd {
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: var(--font-semibold);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.mp-hint-dot {
+  padding: 0 2px;
+}
+
+.mp-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease);
+}
+
+.mp-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.mp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mp-btn.primary {
+  border-color: transparent;
+  background: var(--btn);
+  color: var(--on-btn);
+  padding: 0 15px;
+  box-shadow: var(--shadow);
+}
+
+.mp-btn.primary:hover:not(:disabled) {
+  background: var(--btn-hi);
+}
+
+.mp-btn.primary .spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: var(--on-btn);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp,
+  .mp-status-dot {
+    animation: none !important;
+  }
+}
