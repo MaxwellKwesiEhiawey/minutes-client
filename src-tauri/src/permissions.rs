@@ -42,6 +42,16 @@ pub const ONBOARDING_VERSION: u32 = 1;
 #[cfg(target_os = "macos")]
 const MICROPHONE_PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// The full set of states the frontend can be sent, on every platform.
+///
+/// This is a serialized IPC contract, so the variants exist everywhere even where
+/// nothing local constructs them: on Linux the stubs below only ever return
+/// `NotApplicable`, which leaves `Denied` / `NotDetermined` / `Unknown` with no
+/// live construction site and trips `dead_code` under `-D warnings`. The derived
+/// `Serialize` does not count as a use — rustc ignores derived impls when
+/// computing liveness. Hence the allow, scoped so macOS (where every variant is
+/// constructed) still gets real dead-code checking.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PermissionState {

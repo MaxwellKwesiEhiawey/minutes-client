@@ -198,6 +198,14 @@ pub fn run() {
     minutes_core::install_whisper_logging_hooks();
 
     match tauri::Builder::default()
+        // First, and deliberately so: the callback must be registered before
+        // anything in `setup` touches the database, since the point is to stop a
+        // second process reaching those paths at all. A second launch focuses the
+        // window that is already running instead of opening `desksec.db` twice.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tracing::info!("second instance attempted; focusing the running window");
+            prompt_window::focus_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -222,7 +230,10 @@ pub fn run() {
             let db_path = data_dir.join("desksec.db");
             let legacy_db_path = data_dir.join("parley.db");
             if !db_path.exists() && legacy_db_path.exists() {
-                if let Err(e) = std::fs::rename(&legacy_db_path, &db_path) {
+                // Sidecars included: the database runs in WAL mode, so renaming
+                // the main file alone would strand `parley.db-wal` and lose any
+                // transactions it still held — see `db::rename_with_sidecars`.
+                if let Err(e) = db::rename_with_sidecars(&legacy_db_path, &db_path) {
                     tracing::warn!("failed to migrate parley.db → desksec.db: {e}");
                 }
             }

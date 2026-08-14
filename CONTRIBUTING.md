@@ -124,10 +124,41 @@ Yes — if every matrix leg succeeds. The build matrix produces:
 
 | Artifact name | Platform |
 | --- | --- |
-| `desksec-macos-aarch64` | macOS Apple Silicon (`.dmg`) |
-| `desksec-macos-x86_64` | macOS Intel (`.dmg`) |
-| `desksec-linux` | Linux (`.AppImage` / `.deb` / `.rpm`) |
-| `desksec-windows` | Windows (`.msi` / `.exe`) |
+| `minutes-macos-aarch64` | macOS Apple Silicon (`.dmg`) |
+| `minutes-macos-x86_64` | macOS Intel (`.dmg`) |
+| `minutes-linux` | Linux (`.AppImage` / `.deb` / `.rpm`) |
+| `minutes-windows` | Windows (`.msi` / `.exe`) |
+
+#### Known issue: Windows and Linux installers do not upgrade a DeskSec install
+
+The app was renamed DeskSec → Minutes, and `productName` in
+`src-tauri/tauri.conf.json` changed with it. Tauri derives the Windows MSI
+`UpgradeCode` from `productName` when none is pinned, and the Linux `.deb`/`.rpm`
+package name follows it too — so on those platforms Minutes installs **beside**
+an existing DeskSec rather than replacing it. macOS is unaffected (the bundle is
+identified by `identifier`, which deliberately did not change).
+
+The application `identifier` is still `com.desksec.app`, which is what keeps
+users' recordings, settings and keychain entries working across the rename. The
+side effect is that both installs resolve the *same* app-data directory and the
+same `desksec.db`. Concurrent access is guarded — `tauri-plugin-single-instance`
+means the second launch focuses the first window instead of opening the database
+twice — so the remaining symptom is a stale duplicate entry in Add/Remove
+Programs, not corruption.
+
+To fix it properly, pin the upgrade code so the MSI keeps its old lineage:
+
+1. Build an MSI from a commit that still had `productName: "DeskSec"` (i.e. off
+   `develop` before the rename).
+2. Read its `UpgradeCode` — via Orca, or
+   `msiexec /a <installer>.msi /qb TARGETDIR=<dir>` and inspect the `Property`
+   table.
+3. Set it as `bundle.windows.wix.upgradeCode` in `src-tauri/tauri.conf.json`.
+
+Use the value read from a real installer. A guessed or recomputed GUID is worse
+than leaving this unpinned: it creates a *third* upgrade lineage that silently
+fails to replace either existing install. On Linux, tell existing users to remove
+the old `desksec` package before installing `minutes`.
 
 `fail-fast: false` lets siblings finish if one leg flakes, but the `release`
 job still `needs: build`, so a single red platform **blocks** publishing. That

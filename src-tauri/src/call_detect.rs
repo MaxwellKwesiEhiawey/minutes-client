@@ -10,7 +10,14 @@
 //! Runtime detection is macOS-only. Pure helpers stay available under
 //! `cfg(any(test, target_os = "macos"))` so Linux CI can still unit-test them.
 
-#![cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
+// Note the predicate is `not(target_os)` and deliberately does *not* mention
+// `test`. Enabling `test` does not make the macOS-gated *consumers* of these
+// helpers appear, so a `not(any(test, target_os = "macos"))` predicate switches
+// the allow off for the `lib test` target while leaving the items without a
+// caller — which is how `cargo clippy --all-targets -- -D warnings` on Linux CI
+// failed the test target while passing the lib target. Matches the form used in
+// `prompt_window.rs` and `audio.rs`.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use tauri::AppHandle;
 

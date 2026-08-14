@@ -102,6 +102,10 @@ pub struct Settings {
     /// on, every completed meeting's transcript is sent to the summarization
     /// server without a per-meeting action, so it is surfaced in Settings and
     /// can be turned off.
+    ///
+    /// On by default for a *fresh* install only: an install that predates this
+    /// field is migrated to `false` so the upgrade does not flip a privacy
+    /// default under someone. See `migrate_auto_summarize`.
     #[serde(default = "default_true")]
     pub auto_summarize: bool,
     /// Highest onboarding version this install has finished, or `0` for never.
@@ -475,23 +479,32 @@ pub fn load(config_dir: &PathBuf) -> Settings {
         .unwrap_or_default();
     let mut needs_resave = false;
 
+    // Parsed once and shared by the migrations below that need to tell "the file
+    // said this" apart from "serde filled in a default" — a distinction the typed
+    // `Settings` above has already erased.
+    let raw_json = raw
+        .as_ref()
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok());
+
     // Migrate legacy plaintext token from settings.json into the OS store. (The
     // server URL is no longer migrated in this direction — it's a normal
     // serialized field now, deserialized above like any other setting; see the
     // one-time keychain-fallback pull further down for the opposite-direction
     // migration, for anyone upgrading from when the URL lived in the keychain.)
-    if let Some(r) = &raw {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(r) {
-            if let Some(token) = v.get("server_token").and_then(|t| t.as_str()) {
-                let token = token.trim();
-                if !token.is_empty() && !is_placeholder_key(token) {
-                    match crate::secrets::set_token(token) {
-                        Ok(()) => needs_resave = true,
-                        Err(e) => tracing::warn!("failed to migrate token to OS store: {e}"),
-                    }
+    if let Some(v) = &raw_json {
+        if let Some(token) = v.get("server_token").and_then(|t| t.as_str()) {
+            let token = token.trim();
+            if !token.is_empty() && !is_placeholder_key(token) {
+                match crate::secrets::set_token(token) {
+                    Ok(()) => needs_resave = true,
+                    Err(e) => tracing::warn!("failed to migrate token to OS store: {e}"),
                 }
             }
         }
+    }
+
+    if migrate_auto_summarize(&mut settings, raw_json.as_ref()) {
+        needs_resave = true;
     }
 
     // Upgrade empty/legacy Anthropic model ids to the current Fireworks default.
@@ -554,6 +567,36 @@ pub fn load(config_dir: &PathBuf) -> Settings {
     }
 
     settings
+}
+
+/// Turn auto-summarize off for an install that predates the setting. Returns
+/// whether anything changed.
+///
+/// `auto_summarize` defaults to `true`, which is right for a fresh install:
+/// notes are the reason to record. It is the wrong answer for an *existing*
+/// install, because that install has been summarizing on demand only, and
+/// inheriting the default would start sending every finished meeting's
+/// transcript to the summarization server without the user ever asking. A
+/// privacy default is not something to change under someone silently, so the
+/// upgrade keeps the old behaviour and the Settings toggle offers the new one.
+///
+/// Distinguishing the two cases needs the raw JSON: by the time the typed
+/// `Settings` exists, a `false` that came from the file and a `true` that serde
+/// invented look identical. An absent key with a settings file present means an
+/// upgrade; no file at all means a fresh install and the default stands.
+///
+/// The caller persists the result, so this decision is made exactly once and the
+/// key is explicit from then on — including for anyone who later turns it on.
+fn migrate_auto_summarize(settings: &mut Settings, raw: Option<&serde_json::Value>) -> bool {
+    let Some(raw) = raw else {
+        return false;
+    };
+    if raw.get("auto_summarize").is_some() {
+        return false;
+    }
+    settings.auto_summarize = false;
+    tracing::info!("existing install predates auto_summarize; leaving it off");
+    true
 }
 
 /// Fold the old single-capture-source config into the mic-plus-system-audio
@@ -811,16 +854,62 @@ mod tests {
     }
 
     #[test]
-    fn auto_summarize_defaults_on_and_survives_a_settings_file_without_it() {
+    fn auto_summarize_defaults_on_when_the_field_is_absent() {
         assert!(Settings::default().auto_summarize);
-        // Upgrading users get the new behaviour without editing settings.json…
+        // Deserialization alone defaults it on. Whether an *existing* install
+        // keeps that default is a separate decision made by
+        // `migrate_auto_summarize`, covered below — this only pins the serde
+        // default, so a settings file without the key still parses.
         let older: Settings = serde_json::from_str(r#"{"whisper_model":"base"}"#).unwrap();
         assert!(older.auto_summarize);
-        // …and turning it off sticks, since it governs whether transcripts are
-        // sent to the summarization server without an explicit action.
+        // Turning it off sticks, since it governs whether transcripts are sent to
+        // the summarization server without an explicit action.
         let opted_out: Settings = serde_json::from_str(r#"{"auto_summarize":false}"#).unwrap();
         assert!(!opted_out.auto_summarize);
         assert!(!opted_out.to_view().auto_summarize);
+    }
+
+    #[test]
+    fn auto_summarize_migrates_off_for_an_install_that_predates_it() {
+        // The case that matters: a real settings file with no `auto_summarize`
+        // key. Inheriting the `true` default here would start uploading every
+        // finished transcript for someone who had only ever summarized on demand.
+        let raw: serde_json::Value = serde_json::from_str(r#"{"whisper_model":"base"}"#).unwrap();
+        let mut settings: Settings = serde_json::from_value(raw.clone()).unwrap();
+        assert!(settings.auto_summarize, "serde default should be on");
+
+        assert!(migrate_auto_summarize(&mut settings, Some(&raw)));
+        assert!(!settings.auto_summarize);
+    }
+
+    #[test]
+    fn auto_summarize_migration_leaves_an_explicit_choice_alone() {
+        // Both explicit values are already decisions the user (or a previous
+        // migration) made, so neither is second-guessed. `true` in particular
+        // must survive: re-running the migration over its own output would
+        // otherwise turn the feature off again on every launch.
+        for (json, expected) in [
+            (r#"{"auto_summarize":true}"#, true),
+            (r#"{"auto_summarize":false}"#, false),
+        ] {
+            let raw: serde_json::Value = serde_json::from_str(json).unwrap();
+            let mut settings: Settings = serde_json::from_value(raw.clone()).unwrap();
+
+            assert!(
+                !migrate_auto_summarize(&mut settings, Some(&raw)),
+                "{json} should not be migrated"
+            );
+            assert_eq!(settings.auto_summarize, expected);
+        }
+    }
+
+    #[test]
+    fn auto_summarize_migration_leaves_a_fresh_install_on() {
+        // No settings file at all — nobody's expectations to preserve, so the
+        // default stands and new users get summaries without hunting for a toggle.
+        let mut settings = Settings::default();
+        assert!(!migrate_auto_summarize(&mut settings, None));
+        assert!(settings.auto_summarize);
     }
 
     #[test]

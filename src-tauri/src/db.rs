@@ -152,6 +152,59 @@ fn is_existing_encrypted_database(path: &std::path::Path) -> Result<bool> {
     }
 }
 
+/// The `-wal` and `-shm` companion files SQLite keeps beside a database in WAL
+/// mode (see the `journal_mode` pragma in [`init_schema`]).
+///
+/// These travel with the database or not at all. A write-ahead log holds
+/// committed transactions that have not been checkpointed back into the main
+/// file yet, so moving a database without its `-wal` silently loses them — and
+/// leaving a stale `-wal` beside a *different* database of the same name invites
+/// SQLite to replay it into that one.
+///
+/// Built by appending to the file name rather than with `Path::with_extension`,
+/// which replaces everything after the last dot: that would turn `foo.db` into
+/// `foo-wal`, and would eat part of the timestamp in a quarantined name (which
+/// contains a dot), letting two quarantines in the same second collide.
+fn sidecar_paths(path: &std::path::Path) -> [std::path::PathBuf; 2] {
+    ["-wal", "-shm"].map(|suffix| {
+        let mut name = path.to_path_buf().into_os_string();
+        name.push(suffix);
+        std::path::PathBuf::from(name)
+    })
+}
+
+/// Rename a database file and bring its `-wal`/`-shm` sidecars along.
+///
+/// Failing to move the main file is the caller's problem to report; a sidecar
+/// that will not move is logged and tolerated, because the alternative is
+/// leaving a half-renamed database behind.
+pub(crate) fn rename_with_sidecars(
+    from: &std::path::Path,
+    to: &std::path::Path,
+) -> std::io::Result<()> {
+    std::fs::rename(from, to)?;
+    for (sidecar_from, sidecar_to) in sidecar_paths(from).into_iter().zip(sidecar_paths(to)) {
+        if sidecar_from.exists() {
+            if let Err(e) = std::fs::rename(&sidecar_from, &sidecar_to) {
+                tracing::warn!("failed to move {sidecar_from:?} alongside the database: {e}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Delete any `-wal`/`-shm` files left beside `path`, for when the database they
+/// belonged to is gone and replaying them would corrupt its replacement.
+fn remove_stale_sidecars(path: &std::path::Path) {
+    for sidecar in sidecar_paths(path) {
+        if sidecar.exists() {
+            if let Err(e) = std::fs::remove_file(&sidecar) {
+                tracing::warn!("failed to remove stale {sidecar:?}: {e}");
+            }
+        }
+    }
+}
+
 /// Move an unopenable database out of the way, along with its `-wal` and
 /// `-shm` sidecars, and return the path it was moved to.
 ///
@@ -170,17 +223,10 @@ fn quarantine_database(path: &std::path::Path) -> Result<std::path::PathBuf> {
     std::fs::rename(path, &target)
         .with_context(|| format!("failed to move undecryptable database aside to {target:?}"))?;
 
-    // Built by appending to the quarantined name rather than with
-    // `Path::with_extension`, which would replace everything after the last
-    // dot — and the timestamp contains one, so it would eat part of the
-    // stamp and let two quarantines in the same second collide.
-    for suffix in ["-wal", "-shm"] {
-        let from = path.with_file_name(format!("{file_name}{suffix}"));
+    for (from, to) in sidecar_paths(path).into_iter().zip(sidecar_paths(&target)) {
         if from.exists() {
-            let mut to = target.clone().into_os_string();
-            to.push(suffix);
-            if let Err(e) = std::fs::rename(&from, std::path::PathBuf::from(to)) {
-                tracing::warn!("failed to move stale {suffix} file {from:?} aside: {e}");
+            if let Err(e) = std::fs::rename(&from, &to) {
+                tracing::warn!("failed to move stale sidecar {from:?} aside: {e}");
             }
         }
     }
@@ -307,6 +353,14 @@ fn migrate_plaintext_to_encrypted(path: &std::path::Path, key: &str) -> Result<(
 
     std::fs::rename(&tmp_path, path)
         .context("failed to replace plaintext database with encrypted copy")?;
+
+    // The swapped-in file is encrypted; any `-wal`/`-shm` still sitting beside it
+    // belong to the plaintext database that was just replaced, and SQLCipher
+    // cannot read them. Usually a no-op — the `drop(plain)` above closes that
+    // connection, which checkpoints and removes its own sidecars — so this covers
+    // the leftovers of an earlier unclean shutdown.
+    remove_stale_sidecars(path);
+
     tracing::info!("migrated existing plaintext database to SQLCipher encryption at {path:?}");
     Ok(())
 }
@@ -315,6 +369,12 @@ fn migrate_plaintext_to_encrypted(path: &std::path::Path, key: &str) -> Result<(
 /// connection. Split out from [`open`] so tests can run it against an in-memory
 /// database.
 pub fn init_schema(conn: &Connection) -> Result<()> {
+    // `PRAGMA journal_mode` returns the mode it settled on as a row, which
+    // `execute_batch` discards — so a database that refuses WAL (a read-only or
+    // network filesystem falls back to `delete`) reports success here. That is
+    // tolerable, since every mode is correct for durability and only the sidecar
+    // handling in `sidecar_paths` cares, and it is why that handling treats a
+    // missing `-wal` as ordinary rather than surprising.
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
@@ -1058,6 +1118,80 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"encrypted bytes");
         assert_eq!(std::fs::read(moved("-wal")).unwrap(), b"stale wal");
         assert_eq!(std::fs::read(moved("-shm")).unwrap(), b"stale shm");
+    }
+
+    #[test]
+    fn renaming_a_database_brings_its_sidecars_along() {
+        // The legacy `parley.db` → `desksec.db` migration in `lib.rs` used a bare
+        // `fs::rename`, which stranded the write-ahead log: a `-wal` holds
+        // committed transactions not yet checkpointed into the main file, so
+        // leaving it behind loses them, and leaving it beside a database of the
+        // old name means nothing ever replays it.
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("parley.db");
+        let to = dir.path().join("desksec.db");
+        std::fs::write(&from, b"database").unwrap();
+        std::fs::write(dir.path().join("parley.db-wal"), b"committed but unflushed").unwrap();
+        std::fs::write(dir.path().join("parley.db-shm"), b"shared memory").unwrap();
+
+        rename_with_sidecars(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert!(!dir.path().join("parley.db-wal").exists());
+        assert!(!dir.path().join("parley.db-shm").exists());
+        assert_eq!(std::fs::read(&to).unwrap(), b"database");
+        assert_eq!(
+            std::fs::read(dir.path().join("desksec.db-wal")).unwrap(),
+            b"committed but unflushed"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("desksec.db-shm")).unwrap(),
+            b"shared memory"
+        );
+    }
+
+    #[test]
+    fn renaming_a_database_without_sidecars_is_not_an_error() {
+        // The common case: a cleanly-closed database has no sidecars at all, so
+        // their absence must not look like a failure.
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("parley.db");
+        let to = dir.path().join("desksec.db");
+        std::fs::write(&from, b"database").unwrap();
+
+        rename_with_sidecars(&from, &to).unwrap();
+
+        assert!(to.exists());
+        assert!(!dir.path().join("desksec.db-wal").exists());
+    }
+
+    #[test]
+    fn encrypting_an_existing_database_clears_the_plaintext_sidecars() {
+        // After the swap, a `-wal` beside the file belongs to the plaintext
+        // database that was just replaced. SQLCipher cannot read it, and letting
+        // SQLite try to replay it into the encrypted file is how a working
+        // database becomes an unopenable one.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desksec.db");
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            init_schema(&conn).unwrap();
+            create_meeting(&conn, "Plaintext meeting").unwrap();
+        }
+        // Stand in for what an unclean shutdown leaves behind; a clean close
+        // removes these, which is why the production path is usually a no-op.
+        std::fs::write(dir.path().join("desksec.db-wal"), b"stale plaintext wal").unwrap();
+        std::fs::write(dir.path().join("desksec.db-shm"), b"stale plaintext shm").unwrap();
+
+        migrate_plaintext_to_encrypted(&path, "new-key").unwrap();
+
+        assert!(!dir.path().join("desksec.db-wal").exists());
+        assert!(!dir.path().join("desksec.db-shm").exists());
+        // And the migration itself still did its job.
+        assert!(!is_plaintext_database(&path).unwrap());
+        let conn = open_with_key(&path, Some("new-key")).unwrap();
+        assert_eq!(list_meetings(&conn).unwrap().len(), 1);
     }
 
     #[test]

@@ -243,7 +243,9 @@ pub fn close_prompt_window(app: &AppHandle) {
     destroy_existing_prompt(app);
 }
 
-fn focus_main_window(app: &AppHandle) {
+/// Bring the main window forward, however it was hidden. Also the second
+/// instance's whole job — see the single-instance plugin in `lib.rs`.
+pub(crate) fn focus_main_window(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.unminimize();
         let _ = main.show();
