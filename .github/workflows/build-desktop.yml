@@ -361,6 +361,41 @@ jobs:
             exit 1
           fi
 
+      # Tauri names every bundle from `productName` + the version in
+      # tauri.conf.json, and stamps that version into the MSI ProductVersion, the
+      # macOS CFBundleShortVersionString and the deb/rpm metadata. With the
+      # committed 0.1.0 left alone, every release shipped
+      # `Minutes_0.1.0_aarch64.dmg` — colliding in a downloads folder and telling
+      # users the wrong version. The tag is the source of truth, so take it from
+      # there. Nothing is committed: these edits live only in this checkout.
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Windows MSI ProductVersion has nowhere to put a prerelease suffix, so
+          # a tag like v0.2.2-rc1 would fail deep inside the bundler. Reject it
+          # here with an explanation instead.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=version::Tag '$GITHUB_REF_NAME' is not vMAJOR.MINOR.PATCH — release tags must be plain semver."
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs"), v = process.argv[1];
+            for (const p of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const j = JSON.parse(fs.readFileSync(p, "utf8"));
+              j.version = v;
+              fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+            }
+          ' "$VERSION"
+          # Anchored to the [package] version so a dependency pinned to the same
+          # string is not rewritten too.
+          perl -0pi -e "s/^version = \"[^\"]+\"/version = \"$VERSION\"/m" src-tauri/Cargo.toml
+          # Keep Cargo.lock consistent, so this still works if --locked is added.
+          cargo update -p desksec --precise "$VERSION" --manifest-path src-tauri/Cargo.toml 2>/dev/null || true
+          echo "building $VERSION"
+
       - name: Build Tauri app
         env:
           # Server URL + token are baked into the internal release binary and
