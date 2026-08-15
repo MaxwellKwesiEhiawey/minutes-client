@@ -17,6 +17,21 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: minutes-client
+  GitHubOwnerId:
+    Type: String
+    Default: "72410727"
+    Description: >-
+      Numeric GitHub account id of GitHubOrg. Required because this repo emits
+      the *immutable* OIDC subject claim, which appends the database ids to the
+      owner and repo names — see the trust policy below. Read it from the token
+      itself (the `sub` claim in a workflow run) or from
+      https://api.github.com/users/<owner>.
+  GitHubRepoId:
+    Type: String
+    Default: "1286359176"
+    Description: >-
+      Numeric GitHub repository id of GitHubRepo. From the same `sub` claim, or
+      https://api.github.com/repos/<owner>/<repo>.
   ArtifactBucketName:
     Type: String
     Default: version-release-bucket
@@ -55,8 +70,21 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               # Scoped to tag pushes only — this role has no reason to be
               # assumable from a branch push or PR run.
+              #
+              # The `@<id>` suffixes are not a typo. This repo emits GitHub's
+              # *immutable* subject claim, so the real `sub` is
+              #
+              #   repo:OWNER@72410727/REPO@1286359176:ref:refs/tags/v0.2.3
+              #
+              # not the familiar `repo:OWNER/REPO:ref:...`. The database ids are
+              # baked in so that renaming — or deleting and recreating — a repo
+              # cannot inherit this role's access. A policy written in the
+              # classic form simply never matches, and AWS reports it as a plain
+              # authorization failure with no hint that the subject was the
+              # problem. Verify with the `sub` printed by a workflow run before
+              # changing this.
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/tags/v*"
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}@${GitHubOwnerId}/${GitHubRepo}@${GitHubRepoId}:ref:refs/tags/v*"
       Policies:
         - PolicyName: upload-release-binaries
           PolicyDocument:
