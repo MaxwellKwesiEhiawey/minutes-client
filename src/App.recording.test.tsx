@@ -368,7 +368,14 @@ describe("revealing the automatic summary", () => {
     await waitFor(() => expect(vi.mocked(api.stopRecording)).toHaveBeenCalled());
 
     // Reading the transcript while the summary is still being written.
-    fireEvent.click(screen.getByRole("tab", { name: "Transcription" }));
+    //
+    // `findByRole`, not `getByRole`: awaiting `stopRecording` only proves the
+    // command was *called*, not that the UI left the recording screen. The tab
+    // bar belongs to the saved-meeting view, which replaces the recording view a
+    // tick later, once the stop resolves and `busy` clears. On a fast machine
+    // that had already happened; in CI it had not, and the query found a
+    // still-recording screen with every control disabled.
+    fireEvent.click(await screen.findByRole("tab", { name: "Transcription" }));
 
     state.detail = {
       meeting: {
