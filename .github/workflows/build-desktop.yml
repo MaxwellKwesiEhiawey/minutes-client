@@ -464,24 +464,6 @@ jobs:
           echo "---- release-assets ----"
           ls -lah release-assets/
 
-      # TEMPORARY — remove once the OIDC role assumption works.
-      #
-      # Prints the claims GitHub actually signs. Every assume so far has failed
-      # with "Not authorized to perform sts:AssumeRoleWithWebIdentity" while the
-      # role, its trust policy, the OIDC provider and its audience list all check
-      # out. `sub` is the one value that has been assumed rather than read — and
-      # IAM compares it case-sensitively, so an owner-capitalisation mismatch
-      # looks exactly like this.
-      #
-      # Only the decoded claim fields are printed. The token itself is never
-      # echoed: it is a live credential, and anyone who can read the log could
-      # use it to assume the role.
-      - name: Show OIDC subject
-        run: |
-          T=$(curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value)
-          echo "$T" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{sub, aud, repository, repository_owner, ref}'
-
       # Keeps a permanent copy of every release's installers in S3, separate
       # from GitHub Releases (which is the public download surface). Uses
       # OIDC to assume a role scoped to only this repo's v* tag pushes and
