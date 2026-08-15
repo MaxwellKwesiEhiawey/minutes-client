@@ -39,7 +39,17 @@ Resources:
           - Effect: Allow
             Principal:
               Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
-            Action: sts:AssumeRoleWithWebIdentity
+            # `sts:TagSession` is required, not optional decoration:
+            # `aws-actions/configure-aws-credentials` attaches session tags
+            # (repo, workflow, actor, ref, …) to every assume-role call unless
+            # `role-skip-session-tagging: true` is set. Without permission to tag
+            # the session, STS rejects the call as
+            # "Not authorized to perform sts:AssumeRoleWithWebIdentity" — naming
+            # the assume, never the tagging — which reads exactly like a `sub`
+            # mismatch and costs an afternoon to find. Keep both actions.
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+              - sts:TagSession
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
@@ -53,7 +63,15 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action: s3:PutObject
+                # Installers are hundreds of MB, so `aws s3 cp` uploads them as
+                # multipart. `s3:PutObject` covers the parts and the complete;
+                # aborting a failed upload is a separate action, and without it a
+                # half-finished transfer leaves orphaned parts the job cannot
+                # clean up. Write-only either way: no GetObject, no DeleteObject,
+                # no bucket-level access — a release publisher never reads.
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
                 Resource: !Sub "arn:aws:s3:::${ArtifactBucketName}/${ReleasePrefix}*"
 
 Outputs:
