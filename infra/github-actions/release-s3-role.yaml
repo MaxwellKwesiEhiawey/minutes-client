@@ -97,6 +97,12 @@ Resources:
                 # half-finished transfer leaves orphaned parts the job cannot
                 # clean up. Write-only either way: no GetObject, no DeleteObject,
                 # no bucket-level access — a release publisher never reads.
+                #
+                # The same grant covers the JSON release metadata the workflow
+                # writes alongside the installers: releases/<tag>/release.json
+                # and releases/latest.json. The latter is rewritten on every
+                # release — PutObject over an existing key is an overwrite, so
+                # no DeleteObject is needed for that either.
                 Action:
                   - s3:PutObject
                   - s3:AbortMultipartUpload
