@@ -499,22 +499,11 @@ jobs:
           echo "---- release-assets ----"
           ls -lah release-assets/
 
-      # Keeps a permanent copy of every release's installers in S3, separate
-      # from GitHub Releases (which is the public download surface). Uses
-      # OIDC to assume a role scoped to only this repo's v* tag pushes and
-      # only s3:PutObject under releases/ in this bucket — see
-      # infra/github-actions/release-s3-role.yaml.
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::120569613427:role/minutes-client-github-release-s3
-          aws-region: eu-west-1
-
-      - name: Archive release binaries to S3
-        run: |
-          aws s3 cp release-assets/ "s3://version-release-bucket/releases/${{ github.ref_name }}/" --recursive
-
+      # Publishes before the S3 archive on purpose: the release notes mirrored
+      # to S3 below are GitHub's *generated* notes, which only exist once the
+      # release itself has been created.
       - name: Publish GitHub Release
+        id: gh_release
         uses: softprops/action-gh-release@v2
         with:
           # Public immediately — anyone with the Releases URL can download.
@@ -537,3 +526,110 @@ jobs:
             ### Notes
             - macOS builds need a valid Developer ID + notarization for Gatekeeper-friendly installs. Ad-hoc signed CI builds may require **Right-click → Open** the first time.
             - Server URL and bearer token are baked in at CI build time (`DESKSEC_API_URL` variable + `DESKSEC_TOKEN` secret) and seeded into the OS keychain on first launch.
+
+      # Describes the release in a form something other than GitHub can render:
+      # the published notes, plus every installer's size, digest and target
+      # platform. Uploaded to S3 below so the app/backend can serve its own
+      # downloads page without scraping the Releases API or guessing filenames.
+      - name: Build release metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p metadata
+
+          # Read the release back rather than reusing the `body:` above — what
+          # is published is that text with GitHub's generated notes appended.
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > metadata/gh-release.json
+
+          : > metadata/assets.jsonl
+          for f in release-assets/*; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+
+            case "$base" in
+              *.dmg)      platform=macos;   content_type=application/x-apple-diskimage ;;
+              *.deb)      platform=linux;   content_type=application/vnd.debian.binary-package ;;
+              *.rpm)      platform=linux;   content_type=application/x-rpm ;;
+              *.AppImage) platform=linux;   content_type=application/x-executable ;;
+              *.msi)      platform=windows; content_type=application/x-msi ;;
+              *.exe)      platform=windows; content_type=application/vnd.microsoft.portable-executable ;;
+              *)          platform=unknown; content_type=application/octet-stream ;;
+            esac
+
+            # Arch comes from the filename Tauri produced. Windows only ever
+            # builds x64 here, so it has no arch token to read.
+            case "$base" in
+              *aarch64*|*arm64*|*apple-silicon*) arch=aarch64 ;;
+              *x86_64*|*x64*|*amd64*)            arch=x86_64 ;;
+              *) [ "$platform" = windows ] && arch=x86_64 || arch=unknown ;;
+            esac
+
+            jq -n \
+              --arg name "$base" \
+              --arg platform "$platform" \
+              --arg arch "$arch" \
+              --arg content_type "$content_type" \
+              --arg sha256 "$(sha256sum "$f" | cut -d' ' -f1)" \
+              --arg key "releases/${GITHUB_REF_NAME}/${base}" \
+              --argjson size "$(stat -c %s "$f")" \
+              '{name: $name, platform: $platform, arch: $arch, size: $size,
+                sha256: $sha256, content_type: $content_type, key: $key}' \
+              >> metadata/assets.jsonl
+
+            echo "metadata: ${base} platform=${platform} arch=${arch}"
+          done
+
+          jq -s . metadata/assets.jsonl > metadata/assets.json
+
+          jq -n \
+            --arg tag "${GITHUB_REF_NAME}" \
+            --arg version "${GITHUB_REF_NAME#v}" \
+            --arg commit "${GITHUB_SHA}" \
+            --slurpfile release metadata/gh-release.json \
+            --slurpfile assets metadata/assets.json \
+            '{
+               schema_version: 1,
+               tag: $tag,
+               version: $version,
+               name: ("Minutes " + $tag),
+               commit: $commit,
+               published_at: $release[0].published_at,
+               html_url: $release[0].html_url,
+               notes_markdown: $release[0].body,
+               assets: $assets[0]
+             }' > metadata/release.json
+
+          # latest.json is a full copy, not a pointer: the common case for a
+          # renderer is "show me the current release", and that should be one GET.
+          cp metadata/release.json metadata/latest.json
+
+          # Written after the asset list so it does not describe itself.
+          ( cd release-assets && sha256sum -- * > SHA256SUMS )
+
+          jq . metadata/release.json
+
+      # Keeps a permanent copy of every release's installers and metadata in
+      # S3, separate from GitHub Releases (which is the public download
+      # surface). Uses OIDC to assume a role scoped to only this repo's v* tag
+      # pushes and only s3:PutObject under releases/ in this bucket — see
+      # infra/github-actions/release-s3-role.yaml.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::120569613427:role/minutes-client-github-release-s3
+          aws-region: eu-west-1
+
+      - name: Archive release to S3
+        env:
+          BUCKET: s3://version-release-bucket
+        run: |
+          set -euo pipefail
+          aws s3 cp release-assets/ "${BUCKET}/releases/${GITHUB_REF_NAME}/" --recursive
+          aws s3 cp metadata/release.json "${BUCKET}/releases/${GITHUB_REF_NAME}/release.json" \
+            --content-type application/json --cache-control 'public, max-age=300'
+          # Overwritten on every release; the role has no DeleteObject, and
+          # PutObject over an existing key is enough.
+          aws s3 cp metadata/latest.json "${BUCKET}/releases/latest.json" \
+            --content-type application/json --cache-control 'public, max-age=60'
