@@ -1,6 +1,7 @@
 mod audio;
 mod autostart;
 mod call_detect;
+mod call_detect_linux;
 mod call_detect_win;
 mod commands;
 mod db;

@@ -21,26 +21,26 @@
 
 use tauri::AppHandle;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::locking::MutexExt;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::prompt_window::{self, MeetingPromptData, PromptKind};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::state::AppState;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
-#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::collections::HashSet;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::sync::Mutex;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use std::time::Instant;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use tauri::Manager;
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RunningProcess {
     pid: u32,
@@ -48,7 +48,7 @@ struct RunningProcess {
     name: String,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 struct ActiveCallState {
     process_name: String,
     display_name: String,
@@ -59,7 +59,7 @@ struct ActiveCallState {
 }
 
 /// Idle polls before we treat the meeting as left (re-entry can prompt again).
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const CALL_END_MISS_THRESHOLD: u8 = 3;
 #[cfg(target_os = "macos")]
 const BROWSER_PROBE_INTERVAL_SECS: u64 = 15;
@@ -68,7 +68,7 @@ const BROWSER_PROBE_BACKOFF_SECS: u64 = 300;
 #[cfg(target_os = "macos")]
 const BROWSER_MEETING_STICKY_SECS: u64 = 20;
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 struct DetectionTransition {
     /// Fresh meeting entry that should get a prompt (unless cooled / busy).
     entered: Option<(String, String)>,
@@ -77,7 +77,7 @@ struct DetectionTransition {
 }
 
 /// Background call detector. Spawned once at app startup on macOS.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 pub struct CallDetector {
     active_call: Mutex<Option<ActiveCallState>>,
     // Browser meetings are found by probing tabs over AppleScript, which has no
@@ -111,11 +111,11 @@ pub fn clear_browser_backoff(app_name: &str) {
 #[cfg(not(target_os = "macos"))]
 pub fn clear_browser_backoff(_app_name: &str) {}
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub struct CallDetector;
 
 impl CallDetector {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     fn new() -> Self {
         Self {
             active_call: Mutex::new(None),
@@ -129,7 +129,7 @@ impl CallDetector {
     }
 
     pub fn spawn(app: AppHandle) {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             let detector = CallDetector::new();
             std::thread::Builder::new()
@@ -137,13 +137,13 @@ impl CallDetector {
                 .spawn(move || detector.run_loop(app))
                 .ok();
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             let _ = app;
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     fn run_loop(&self, app: AppHandle) {
         tracing::info!("call detection started (entry-edge prompts)");
         loop {
@@ -235,7 +235,7 @@ impl CallDetector {
 
     /// Update session state from this poll. Returns whether we just entered a
     /// meeting (idle→active or app switch) and/or left one.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     fn note_detection(&self, detected: Option<&(String, String)>) -> DetectionTransition {
         let mut active = self.active_call.lock_safe();
         match (active.as_mut(), detected) {
@@ -377,6 +377,29 @@ impl CallDetector {
         }
 
         None
+    }
+
+    /// Linux reports capture streams with the PID that opened them, exactly the
+    /// shape macOS produces — so this shares `native_app_has_active_input`,
+    /// including its walk down the process tree to catch an app's audio helper.
+    ///
+    /// Browser meetings are out of scope: macOS finds them by reading tab URLs
+    /// over AppleScript, and the Linux equivalent would be window titles, which
+    /// X11 exposes and Wayland does not.
+    #[cfg(target_os = "linux")]
+    fn detect_active_call(&self, apps: &[String]) -> Option<(String, String)> {
+        // A failed probe is "unknown", not "silent": returning None here lets
+        // CALL_END_MISS_THRESHOLD absorb it rather than ending a live session.
+        let capturing = crate::call_detect_linux::capturing_pids()?;
+        if capturing.is_empty() {
+            return None;
+        }
+        let processes = running_processes();
+
+        apps.iter()
+            .filter(|app| app.as_str() != "google-meet" && app.as_str() != "teams-web")
+            .find(|config_app| native_app_has_active_input(config_app, &processes, &capturing))
+            .map(|config_app| (display_name_for(config_app), config_app.clone()))
     }
 
     /// Windows names the microphone user directly, so there is no process tree
@@ -522,20 +545,20 @@ impl CallDetector {
     }
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn binary_name_from_command(command: &str) -> String {
     let trimmed = command.trim();
     trimmed.rsplit('/').next().unwrap_or(trimmed).to_string()
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn split_first_field(text: &str) -> Option<(&str, &str)> {
     let trimmed = text.trim_start();
     let end = trimmed.find(char::is_whitespace)?;
     Some((&trimmed[..end], &trimmed[end..]))
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn process_snapshots_from_ps_output(text: &str) -> Vec<RunningProcess> {
     text.lines()
         .filter_map(|line| {
@@ -556,7 +579,10 @@ fn process_snapshots_from_ps_output(text: &str) -> Vec<RunningProcess> {
         .collect()
 }
 
-#[cfg(target_os = "macos")]
+// `ps -axo pid=,ppid=,comm=` is accepted by both BSD ps on macOS and procps on
+// Linux, and `process_snapshots_from_ps_output` parses either. Note that Linux
+// truncates `comm` to 15 characters, so a longer binary name will not match.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn running_processes() -> Vec<RunningProcess> {
     let output = std::process::Command::new("ps")
         .args(["-axo", "pid=,ppid=,comm="])
@@ -571,7 +597,7 @@ fn running_processes() -> Vec<RunningProcess> {
     }
 }
 
-#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn config_app_aliases(config_app: &str) -> Vec<&'static str> {
     match config_app {
         "Microsoft Teams" | "MSTeams" | "Microsoft Teams (work or school)" | "Teams" => vec![
@@ -581,6 +607,8 @@ fn config_app_aliases(config_app: &str) -> Vec<&'static str> {
             "Teams",
             // Windows desktop build.
             "ms-teams",
+            // Community Linux client.
+            "teams-for-linux",
         ],
         // The default app list carries macOS process names; the Windows binary
         // is Zoom.exe, which `process_name_matches_config_app` reaches through
@@ -590,7 +618,7 @@ fn config_app_aliases(config_app: &str) -> Vec<&'static str> {
     }
 }
 
-#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn process_name_matches_config_app(config_app: &str, process_name: &str) -> bool {
     let process_lower = process_name.to_lowercase();
     let aliases = config_app_aliases(config_app);
@@ -607,7 +635,7 @@ fn process_name_matches_config_app(config_app: &str, process_name: &str) -> bool
     })
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn native_app_candidate_process_pids(
     config_app: &str,
     processes: &[RunningProcess],
@@ -631,7 +659,7 @@ fn native_app_candidate_process_pids(
     candidates
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn native_app_has_active_input(
     config_app: &str,
     processes: &[RunningProcess],
@@ -643,7 +671,7 @@ fn native_app_has_active_input(
         .any(|pid| active_input_pids.contains(pid))
 }
 
-#[cfg(any(test, target_os = "macos", target_os = "windows"))]
+#[cfg(any(test, target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn display_name_for(process: &str) -> String {
     match process {
         "zoom.us" => "Zoom".into(),
@@ -1102,6 +1130,17 @@ mod tests {
         assert!(process_name_matches_config_app("MSTeams", "MSTeams"));
         assert!(process_name_matches_config_app("Slack", "slack.exe"));
         assert!(process_name_matches_config_app("WhatsApp", "WhatsApp.exe"));
+    }
+
+    #[test]
+    fn linux_binary_names_match_the_configured_apps() {
+        // `ps -o comm=` on Linux yields the bare binary name.
+        assert!(process_name_matches_config_app("zoom.us", "zoom"));
+        assert!(process_name_matches_config_app("Slack", "slack"));
+        assert!(process_name_matches_config_app(
+            "Microsoft Teams",
+            "teams-for-linux"
+        ));
     }
 
     #[test]
