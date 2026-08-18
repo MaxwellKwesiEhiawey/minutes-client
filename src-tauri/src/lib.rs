@@ -77,6 +77,48 @@ fn load_env_file() {
 /// `std::process::exit`, which runs no destructors, and a leaked guard would
 /// mean the very error the dialog tells the user to look up never reaches the
 /// log file.
+/// Carry a per-identifier directory over from a previous bundle identifier.
+///
+/// `app_data_dir` and friends are derived from the identifier, so renaming it
+/// leaves the recordings, the database and `settings.json` sitting in a
+/// directory the app no longer looks at — the user sees an empty app rather
+/// than an error. Entries are moved individually and existing ones are left
+/// alone, so this is safe to run on every launch and does nothing once done.
+///
+/// Returns what it moved, for the caller to log: this runs before the tracing
+/// subscriber exists, because the log directory is inside the directory being
+/// migrated.
+fn migrate_identifier_dir(new_dir: &std::path::Path, legacy_identifier: &str) -> Vec<String> {
+    let mut moved = Vec::new();
+    let Some(parent) = new_dir.parent() else {
+        return moved;
+    };
+    let legacy_dir = parent.join(legacy_identifier);
+    if legacy_dir == new_dir || !legacy_dir.is_dir() {
+        return moved;
+    }
+    let Ok(entries) = std::fs::read_dir(&legacy_dir) else {
+        return moved;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let target = new_dir.join(&name);
+        if target.exists() {
+            // Whatever is already here was written under the new identifier and
+            // is newer than anything left behind.
+            continue;
+        }
+        if std::fs::rename(entry.path(), &target).is_ok() {
+            moved.push(name.to_string_lossy().into_owned());
+        }
+    }
+    moved
+}
+
+/// The bundle identifier before the rename to `com.minutes.app`. Per-identifier
+/// paths and keychain entries were written under this one.
+const LEGACY_IDENTIFIER: &str = "com.desksec.app";
+
 fn init_logging(data_dir: &std::path::Path) {
     let log_dir = data_dir.join("logs");
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
@@ -232,9 +274,20 @@ pub fn run() {
                 .map_err(|e| format!("could not resolve app data dir: {e}"))?;
             std::fs::create_dir_all(&data_dir).ok();
 
+            // Before anything reads from it: the identifier changed from
+            // `com.desksec.app`, and every per-identifier path moved with it.
+            let migrated = migrate_identifier_dir(&data_dir, LEGACY_IDENTIFIER);
+
             // Needs the resolved data dir (for the log file path), so this is
             // the earliest point in startup a tracing subscriber can exist.
             init_logging(&data_dir);
+
+            if !migrated.is_empty() {
+                tracing::info!(
+                    count = migrated.len(),
+                    "moved app data over from the previous bundle identifier"
+                );
+            }
 
             let db_path = data_dir.join("desksec.db");
             let legacy_db_path = data_dir.join("parley.db");
@@ -251,6 +304,12 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .map_err(|e| format!("could not resolve app config dir: {e}"))?;
+            // Separate from the data directory on Linux and Windows, the same
+            // path on macOS — where this is then a no-op, having already run.
+            std::fs::create_dir_all(&config_dir).ok();
+            for name in migrate_identifier_dir(&config_dir, LEGACY_IDENTIFIER) {
+                tracing::info!(file = %name, "moved config over from the previous identifier");
+            }
 
             // Files staged for a share are meant to be momentary. Clear them at
             // startup so nothing — least of all a transcript — survives from a
@@ -506,6 +565,85 @@ fn report_fatal_startup_error(e: &tauri::Error) -> ! {
 
 #[cfg(test)]
 mod tests {
+
+    /// Renaming the bundle identifier moves every per-identifier path with it.
+    /// These pin the recovery, because the failure mode is silent: the app
+    /// opens looking brand new, with the meetings still on disk next door.
+    mod identifier_migration {
+        use super::super::migrate_identifier_dir;
+
+        fn write(dir: &std::path::Path, name: &str, body: &str) {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+
+        #[test]
+        fn moves_an_old_identifier_directory_across() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "desksec.db", "meetings");
+            write(&old, "desksec.db-wal", "pending");
+            std::fs::create_dir_all(&new).unwrap();
+
+            let moved = migrate_identifier_dir(&new, "com.desksec.app");
+
+            assert_eq!(moved.len(), 2);
+            assert_eq!(
+                std::fs::read_to_string(new.join("desksec.db")).unwrap(),
+                "meetings"
+            );
+            // The sidecar matters: the database runs in WAL mode, and a main
+            // file without its -wal loses whatever that still held.
+            assert!(new.join("desksec.db-wal").exists());
+            assert!(!old.join("desksec.db").exists());
+        }
+
+        #[test]
+        fn never_overwrites_what_the_new_identifier_already_wrote() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "settings.json", "stale");
+            write(&new, "settings.json", "current");
+
+            let moved = migrate_identifier_dir(&new, "com.desksec.app");
+
+            assert!(moved.is_empty());
+            assert_eq!(
+                std::fs::read_to_string(new.join("settings.json")).unwrap(),
+                "current",
+                "a file written under the new identifier is the live one"
+            );
+        }
+
+        #[test]
+        fn is_a_no_op_once_it_has_run() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "desksec.db", "meetings");
+            std::fs::create_dir_all(&new).unwrap();
+
+            assert_eq!(migrate_identifier_dir(&new, "com.desksec.app").len(), 1);
+            // Runs on every launch, so the second one must find nothing to do
+            // rather than disturbing the database it moved a moment ago.
+            assert!(migrate_identifier_dir(&new, "com.desksec.app").is_empty());
+            assert_eq!(
+                std::fs::read_to_string(new.join("desksec.db")).unwrap(),
+                "meetings"
+            );
+        }
+
+        #[test]
+        fn a_fresh_install_has_nothing_to_migrate() {
+            let root = tempfile::tempdir().unwrap();
+            let new = root.path().join("com.minutes.app");
+            std::fs::create_dir_all(&new).unwrap();
+            assert!(migrate_identifier_dir(&new, "com.desksec.app").is_empty());
+        }
+    }
+
     use super::*;
 
     /// Regression cover for the develop merge that dropped the provider install

@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
 use keyring::Entry;
 
-const SERVICE: &str = "com.desksec.app";
-const LEGACY_SERVICE: &str = "app.parley.desktop";
+const SERVICE: &str = "com.minutes.app";
+/// Credential-store services this app has used before, newest first.
+///
+/// The bundle identifier is part of the keychain service name, so renaming the
+/// identifier orphans every secret stored under the old one. Each rename adds
+/// an entry here; reads fall through the list and migrate the first hit
+/// forward, so a user who skips a version still recovers.
+const LEGACY_SERVICE_DESKSEC: &str = "com.desksec.app";
+const LEGACY_SERVICE_PARLEY: &str = "app.parley.desktop";
 const ACCOUNT_TOKEN: &str = "desksec-server-token";
 const LEGACY_ACCOUNT_TOKEN: &str = "parley-server-token";
 const ACCOUNT_API_URL: &str = "desksec-server-url";
@@ -20,22 +27,37 @@ fn entry(service: &str, account: &str) -> Result<Entry> {
     Entry::new(service, account).context("failed to open OS credential store")
 }
 
-fn get_secret(account: &str, legacy_service: &str, legacy_account: &str) -> Result<Option<String>> {
+/// Read `account`, falling back through `legacy` — a list of (service, account)
+/// pairs in newest-first order — and migrating the first value found.
+///
+/// A legacy read that fails for a reason other than "no such entry" is not
+/// fatal: a locked keyring should leave the remaining candidates to be tried,
+/// and the next launch to retry, rather than turning into a hard error.
+fn get_secret(account: &str, legacy: &[(&str, &str)]) -> Result<Option<String>> {
     match entry(SERVICE, account)?.get_password() {
         Ok(value) => return Ok(Some(value)),
         Err(keyring::Error::NoEntry) => {}
         Err(e) => return Err(e).context("failed to read from OS credential store"),
     }
 
-    match entry(legacy_service, legacy_account)?.get_password() {
-        Ok(value) => {
-            let _ = set_secret(account, &value);
-            let _ = entry(legacy_service, legacy_account)?.delete_credential();
-            Ok(Some(value))
+    for (legacy_service, legacy_account) in legacy {
+        let Ok(legacy_entry) = entry(legacy_service, legacy_account) else {
+            continue;
+        };
+        match legacy_entry.get_password() {
+            Ok(value) => {
+                let _ = set_secret(account, &value);
+                let _ = legacy_entry.delete_credential();
+                return Ok(Some(value));
+            }
+            Err(keyring::Error::NoEntry) => continue,
+            Err(e) => {
+                tracing::warn!("could not read legacy credential {legacy_service}: {e}");
+                continue;
+            }
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e).context("failed to read legacy OS credential store"),
     }
+    Ok(None)
 }
 
 fn set_secret(account: &str, value: &str) -> Result<()> {
@@ -46,7 +68,13 @@ fn set_secret(account: &str, value: &str) -> Result<()> {
 
 /// Read the Minutes bearer token from the OS credential store.
 pub fn get_token() -> Result<Option<String>> {
-    get_secret(ACCOUNT_TOKEN, LEGACY_SERVICE, LEGACY_ACCOUNT_TOKEN)
+    get_secret(
+        ACCOUNT_TOKEN,
+        &[
+            (LEGACY_SERVICE_DESKSEC, ACCOUNT_TOKEN),
+            (LEGACY_SERVICE_PARLEY, LEGACY_ACCOUNT_TOKEN),
+        ],
+    )
 }
 
 /// Persist the Minutes bearer token in the OS credential store.
@@ -56,10 +84,13 @@ pub fn set_token(token: &str) -> Result<()> {
 
 /// Read this install's device token from the OS credential store.
 ///
-/// Unlike [`get_token`] there is no legacy fallback: device registration
-/// postdates the `app.parley.desktop` rename, so a value can never exist there.
+/// Falls back to the `com.desksec.app` service, but not to the parley-era one:
+/// device registration postdates that rename, so no value can exist there.
 pub fn get_device_token() -> Result<Option<String>> {
-    read_optional(ACCOUNT_DEVICE_TOKEN)
+    get_secret(
+        ACCOUNT_DEVICE_TOKEN,
+        &[(LEGACY_SERVICE_DESKSEC, ACCOUNT_DEVICE_TOKEN)],
+    )
 }
 
 /// Persist this install's device token in the OS credential store.
@@ -69,7 +100,10 @@ pub fn set_device_token(token: &str) -> Result<()> {
 
 /// Read this install's server-assigned device id.
 pub fn get_device_id() -> Result<Option<String>> {
-    read_optional(ACCOUNT_DEVICE_ID)
+    get_secret(
+        ACCOUNT_DEVICE_ID,
+        &[(LEGACY_SERVICE_DESKSEC, ACCOUNT_DEVICE_ID)],
+    )
 }
 
 /// Persist this install's server-assigned device id.
@@ -91,17 +125,15 @@ pub fn clear_device_credentials() -> Result<()> {
     Ok(())
 }
 
-fn read_optional(account: &str) -> Result<Option<String>> {
-    match entry(SERVICE, account)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e).context("failed to read from OS credential store"),
-    }
-}
-
 /// Read the Minutes server URL from the OS credential store.
 pub fn get_api_url() -> Result<Option<String>> {
-    get_secret(ACCOUNT_API_URL, LEGACY_SERVICE, LEGACY_ACCOUNT_API_URL)
+    get_secret(
+        ACCOUNT_API_URL,
+        &[
+            (LEGACY_SERVICE_DESKSEC, ACCOUNT_API_URL),
+            (LEGACY_SERVICE_PARLEY, LEGACY_ACCOUNT_API_URL),
+        ],
+    )
 }
 
 /// Persist the Minutes server URL in the OS credential store.
@@ -139,6 +171,31 @@ pub enum DbKeyStatus {
     Unavailable(String),
 }
 
+/// Move a database key stored under a previous service name into the current
+/// one. Returns the key when there was one to move.
+///
+/// The copy is written before the original is removed, and a failed write
+/// abandons the migration with the original intact: a key that exists in
+/// neither place is an unopenable database.
+fn migrate_db_key_from(legacy_service: &str, current: &Entry) -> Result<Option<String>, String> {
+    let legacy = match Entry::new(legacy_service, ACCOUNT_DB_KEY) {
+        Ok(entry) => entry,
+        Err(e) => return Err(format!("could not open {legacy_service}: {e}")),
+    };
+    let value = match legacy.get_password() {
+        Ok(value) => value,
+        Err(keyring::Error::NoEntry) => return Ok(None),
+        Err(e) => return Err(format!("could not read {legacy_service}: {e}")),
+    };
+    if let Err(e) = current.set_password(&value) {
+        return Err(format!("could not carry the database key forward: {e}"));
+    }
+    // Only now is it safe to drop the old copy.
+    let _ = legacy.delete_credential();
+    tracing::info!("migrated the database key from {legacy_service}");
+    Ok(Some(value))
+}
+
 /// Get the local database's SQLCipher passphrase from the OS credential store,
 /// generating and persisting a new random one when `may_mint` allows it.
 ///
@@ -156,8 +213,22 @@ pub fn get_or_create_db_key(may_mint: bool) -> DbKeyStatus {
 
     match e.get_password() {
         Ok(value) => DbKeyStatus::Available(value),
-        Err(keyring::Error::NoEntry) if !may_mint => DbKeyStatus::Lost,
         Err(keyring::Error::NoEntry) => {
+            // The identifier is part of the service name, so a rename hides the
+            // key rather than deleting it. Recover it before concluding
+            // anything: `Lost` makes `db::open_or_recover` move the database
+            // aside and start empty, which would turn a rename into data loss
+            // for every existing user.
+            match migrate_db_key_from(LEGACY_SERVICE_DESKSEC, &e) {
+                Ok(Some(value)) => return DbKeyStatus::Available(value),
+                Ok(None) => {}
+                // Unreadable is not the same as absent — say so, so the
+                // database is left alone until the store can be read.
+                Err(err) => return DbKeyStatus::Unavailable(err),
+            }
+            if !may_mint {
+                return DbKeyStatus::Lost;
+            }
             let key = format!(
                 "{}{}",
                 uuid::Uuid::new_v4().simple(),

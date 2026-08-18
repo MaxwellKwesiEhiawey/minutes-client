@@ -3,7 +3,7 @@
   "productName": "Minutes",
   "mainBinaryName": "Minutes",
   "version": "0.1.0",
-  "identifier": "com.desksec.app",
+  "identifier": "com.minutes.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
