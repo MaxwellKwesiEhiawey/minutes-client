@@ -27,12 +27,7 @@ import {
   whisperModelSizeLabel,
 } from "../utils/whisperModels";
 import { serverUrlProblem } from "../utils/serverUrl";
-import {
-  LOCALES,
-  LOCALE_NAMES,
-  useI18n,
-  type TranslationKey,
-} from "../i18n";
+import { LOCALES, LOCALE_NAMES, useI18n, type TranslationKey } from "../i18n";
 
 interface Props {
   current: SettingsView;
@@ -60,15 +55,47 @@ type TabId =
 const TABS: { id: TabId; label: TranslationKey; blurb: TranslationKey }[] = [
   // First: someone who cannot read the current language comes here to fix that,
   // so the word "Language" has to be visible in the rail itself.
-  { id: "language", label: "settings.tab.languageRegion", blurb: "settings.blurb.languageRegion" },
-  { id: "appearance", label: "settings.tab.appearance", blurb: "settings.blurb.appearance" },
-  { id: "reading", label: "settings.tab.reading", blurb: "settings.blurb.reading" },
+  {
+    id: "language",
+    label: "settings.tab.languageRegion",
+    blurb: "settings.blurb.languageRegion",
+  },
+  {
+    id: "appearance",
+    label: "settings.tab.appearance",
+    blurb: "settings.blurb.appearance",
+  },
+  {
+    id: "reading",
+    label: "settings.tab.reading",
+    blurb: "settings.blurb.reading",
+  },
   { id: "audio", label: "settings.tab.audio", blurb: "settings.blurb.audio" },
-  { id: "call-detection", label: "settings.tab.callDetection", blurb: "settings.blurb.callDetection" },
-  { id: "transcription", label: "settings.tab.transcription", blurb: "settings.blurb.transcription" },
-  { id: "summary", label: "settings.tab.summary", blurb: "settings.blurb.summary" },
-  { id: "privacy", label: "settings.tab.privacy", blurb: "settings.blurb.privacy" },
-  { id: "advanced", label: "settings.tab.advanced", blurb: "settings.blurb.advanced" },
+  {
+    id: "call-detection",
+    label: "settings.tab.callDetection",
+    blurb: "settings.blurb.callDetection",
+  },
+  {
+    id: "transcription",
+    label: "settings.tab.transcription",
+    blurb: "settings.blurb.transcription",
+  },
+  {
+    id: "summary",
+    label: "settings.tab.summary",
+    blurb: "settings.blurb.summary",
+  },
+  {
+    id: "privacy",
+    label: "settings.tab.privacy",
+    blurb: "settings.blurb.privacy",
+  },
+  {
+    id: "advanced",
+    label: "settings.tab.advanced",
+    blurb: "settings.blurb.advanced",
+  },
 ];
 
 /* A settings row: label + hint on the left, control on the right. `stack`
@@ -154,6 +181,7 @@ export function SettingsScreen({
     current.diarization_enabled,
   );
   const [exportMarkdown, setExportMarkdown] = useState(current.export_markdown);
+  const [startAtLogin, setStartAtLogin] = useState(current.start_at_login);
   const [anthropicModel, setAnthropicModel] = useState(current.anthropic_model);
   const [chunkSecs, setChunkSecs] = useState(current.chunk_secs);
   const [partialSecs, setPartialSecs] = useState(current.partial_secs);
@@ -368,6 +396,7 @@ export function SettingsScreen({
     () => ({
       server_url: serverUrl,
       transcription_engine: transcriptionEngine,
+      start_at_login: startAtLogin,
       whisper_model: whisperModel,
       diarization_enabled: diarizationEnabled,
       export_markdown: exportMarkdown,
@@ -389,6 +418,7 @@ export function SettingsScreen({
     [
       serverUrl,
       transcriptionEngine,
+      startAtLogin,
       whisperModel,
       diarizationEnabled,
       exportMarkdown,
@@ -436,7 +466,10 @@ export function SettingsScreen({
         onSaved(next);
         setSaveState("saved");
         window.clearTimeout(savedTimer.current);
-        savedTimer.current = window.setTimeout(() => setSaveState("idle"), 2000);
+        savedTimer.current = window.setTimeout(
+          () => setSaveState("idle"),
+          2000,
+        );
       } catch (e) {
         if (cancelled) return;
         setErr(normalizeError(e).message);
@@ -591,7 +624,11 @@ export function SettingsScreen({
       {err && <p className="error-text st-error">{err}</p>}
 
       <div className="st-body">
-        <nav className="st-tabs" role="tablist" aria-label={t("settings.sectionsLabel")}>
+        <nav
+          className="st-tabs"
+          role="tablist"
+          aria-label={t("settings.sectionsLabel")}
+        >
           {/* Named `section`, not `t` — that would shadow the translator. */}
           {TABS.map((section) => (
             <button
@@ -717,7 +754,9 @@ export function SettingsScreen({
                   }
                 >
                   <option value="normal">{t("settings.spacingDefault")}</option>
-                  <option value="relaxed">{t("settings.spacingRelaxed")}</option>
+                  <option value="relaxed">
+                    {t("settings.spacingRelaxed")}
+                  </option>
                   <option value="loose">{t("settings.spacingLoose")}</option>
                 </select>
               </Row>
@@ -805,7 +844,10 @@ export function SettingsScreen({
               </Row>
               {captureSystemAudio &&
                 (loopbackSetupHint ? (
-                  <Row label={t("settings.systemAudioSource")} hint={loopbackSetupHint} />
+                  <Row
+                    label={t("settings.systemAudioSource")}
+                    hint={loopbackSetupHint}
+                  />
                 ) : (
                   <Row
                     label={t("settings.systemAudioSource")}
@@ -907,7 +949,9 @@ export function SettingsScreen({
                   id="transcription-engine"
                   value={transcriptionEngine}
                   onChange={(e) =>
-                    setTranscriptionEngine(e.target.value as TranscriptionEngine)
+                    setTranscriptionEngine(
+                      e.target.value as TranscriptionEngine,
+                    )
                   }
                 >
                   <option value="deepgram">{t("settings.engineCloud")}</option>
@@ -928,7 +972,10 @@ export function SettingsScreen({
                 />
               ) : (
                 <>
-                  <Row label={t("settings.accuracyModel")} htmlFor="whisper-model">
+                  <Row
+                    label={t("settings.accuracyModel")}
+                    htmlFor="whisper-model"
+                  >
                     <select
                       id="whisper-model"
                       value={whisperModel}
@@ -1028,7 +1075,9 @@ export function SettingsScreen({
                             </div>
                             {confirmDeleteId === m.id ? (
                               <div className="installed-model-confirm">
-                                <span className="tiny">{t("settings.deleteQuestion")}</span>
+                                <span className="tiny">
+                                  {t("settings.deleteQuestion")}
+                                </span>
                                 <button
                                   type="button"
                                   className="btn ghost danger"
@@ -1203,6 +1252,25 @@ export function SettingsScreen({
 
           {tab === "advanced" && (
             <div className="st-rows">
+              <Row
+                label={t("settings.startAtLogin")}
+                hint={
+                  // Only macOS detects meetings, so only there does running
+                  // in the background buy anything beyond opening faster.
+                  // Saying otherwise promises Windows and Linux users a
+                  // feature they will never get.
+                  current.call_detection_supported
+                    ? t("settings.startAtLoginHint")
+                    : t("settings.startAtLoginHintNoDetection")
+                }
+              >
+                <Toggle
+                  id="start-at-login"
+                  label={t("settings.startAtLogin")}
+                  checked={startAtLogin}
+                  onChange={setStartAtLogin}
+                />
+              </Row>
               <Row
                 label={t("settings.serverUrl")}
                 htmlFor="server-url"

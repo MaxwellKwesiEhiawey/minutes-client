@@ -393,6 +393,11 @@ export const it: Translations = {
   "settings.telemetryDetail":
     "Cosa viene inviato: conteggi di utilizzo delle funzioni, intervalli di durata, categorie di errore, versione dell'app, sistema operativo e versione, tipo di CPU e numero di core, e un identificativo di installazione casuale che puoi reimpostare. Cosa non viene mai inviato: le tue registrazioni, trascrizioni, riepiloghi, titoli delle riunioni, nomi dei partecipanti, percorsi dei file, né nulla di ciò che scrivi o dici. Se l'app è offline, i report attendono in un piccolo file su questo dispositivo e vengono inviati più tardi. I report sono conservati per 12 mesi. Disattivando questa opzione ogni invio si interrompe immediatamente, tutto ciò che è ancora in attesa su questo dispositivo viene eliminato e l'identificativo di installazione viene rimosso.",
 
+  "settings.startAtLogin": "Avvia all'accesso",
+  "settings.startAtLoginHint":
+    "Esegue Minutes in background fin dall'accesso, così le riunioni vengono rilevate prima che tu apra l'app.",
+  "settings.startAtLoginHintNoDetection":
+    "Esegue Minutes in background fin dall'accesso, così è subito pronto. Il rilevamento automatico delle riunioni è disponibile solo su macOS.",
   "settings.serverUrl": "URL del server",
   "settings.serverUrlLocked":
     "Bloccato: configurato in fase di build dalla CI ({url}).",

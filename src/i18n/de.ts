@@ -395,6 +395,11 @@ export const de: Translations = {
   "settings.telemetryDetail":
     "Was gesendet wird: Zählwerte zur Funktionsnutzung, Dauerbereiche, Fehlerkategorien, App-Version, Betriebssystem und Version, CPU-Typ und Kernanzahl sowie eine zufällige Installations-ID, die Sie zurücksetzen können. Was nie gesendet wird: Ihre Aufzeichnungen, Transkripte, Zusammenfassungen, Meeting-Titel, Teilnehmernamen, Dateipfade oder irgendetwas, das Sie tippen oder sagen. Ist die App offline, warten die Berichte in einer kleinen Datei auf diesem Gerät und werden später gesendet. Berichte werden 12 Monate aufbewahrt. Wenn Sie dies ausschalten, endet jede Übermittlung sofort, alles noch Wartende auf diesem Gerät wird gelöscht und die Installations-ID wird entfernt.",
 
+  "settings.startAtLogin": "Beim Anmelden starten",
+  "settings.startAtLoginHint":
+    "Führt Minutes ab der Anmeldung im Hintergrund aus, damit Besprechungen erkannt werden, bevor Sie die App öffnen.",
+  "settings.startAtLoginHintNoDetection":
+    "Führt Minutes ab der Anmeldung im Hintergrund aus, damit es sofort bereit ist. Die automatische Besprechungserkennung gibt es nur unter macOS.",
   "settings.serverUrl": "Server-URL",
   "settings.serverUrlLocked":
     "Gesperrt — beim Build durch CI konfiguriert ({url}).",

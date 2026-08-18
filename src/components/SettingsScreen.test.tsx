@@ -49,6 +49,7 @@ afterEach(cleanup);
 function settings(
   engine: TranscriptionEngine,
   language: string,
+  overrides: Partial<SettingsView> = {},
 ): SettingsView {
   return {
     server_url: "https://example.test",
@@ -81,28 +82,42 @@ function settings(
     server_token_from_env: false,
     server_token_from_build: false,
     device_id: null,
+    start_at_login: false,
+    ...overrides,
   } as SettingsView;
 }
 
-function renderWith(engine: TranscriptionEngine, language: string) {
+function renderWith(
+  engine: TranscriptionEngine,
+  language: string,
+  overrides: Partial<SettingsView> = {},
+) {
   // No i18n provider: the context defaults to the English dictionary, which is
   // what every other component test relies on.
   const view = render(
     <SettingsScreen
-      current={settings(engine, language)}
+      current={settings(engine, language, overrides)}
       onClose={() => {}}
       onSaved={() => {}}
       onRerunOnboarding={() => {}}
     />,
   );
-  // The spoken-language row lives on the transcription tab; the screen opens
-  // on the UI-language tab.
-  fireEvent.click(screen.getByRole("tab", { name: /transcription/i }));
   return view;
 }
 
+/** The screen opens on the UI-language tab; rows live on their own tabs. */
+function openTab(name: RegExp) {
+  fireEvent.click(screen.getByRole("tab", { name }));
+}
+
 function languageSelect(): HTMLSelectElement {
+  openTab(/transcription/i);
   return screen.getByLabelText(/spoken language/i) as HTMLSelectElement;
+}
+
+function startAtLoginSwitch(): HTMLElement {
+  openTab(/advanced/i);
+  return screen.getByRole("switch", { name: /start at login/i });
 }
 
 /**
@@ -135,5 +150,36 @@ describe("spoken-language options", () => {
     // The stored value is left alone, so switching engine back restores it.
     renderWith("whisper", "");
     expect(languageSelect().value).toBe("");
+  });
+});
+
+/**
+ * Auto-detection only runs while the process does, so the login item is what
+ * makes it catch a meeting nobody thought to prepare for. It stays opt-in:
+ * registering one unasked is the kind of thing users resent.
+ */
+describe("start at login", () => {
+  it("is off unless the setting says otherwise", () => {
+    renderWith("deepgram", "en");
+    expect(startAtLoginSwitch().getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("reflects an install that already opted in", () => {
+    renderWith("deepgram", "en", { start_at_login: true });
+    expect(startAtLoginSwitch().getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("promises detection only where detection exists", () => {
+    renderWith("deepgram", "en", { call_detection_supported: true });
+    openTab(/advanced/i);
+    expect(screen.getByText(/meetings are detected/i)).toBeTruthy();
+  });
+
+  it("says so plainly where it does not", () => {
+    // Windows and Linux keep the app resident but detect nothing, so the hint
+    // must not imply a feature those users will never get.
+    renderWith("deepgram", "en", { call_detection_supported: false });
+    openTab(/advanced/i);
+    expect(screen.getByText(/macOS-only/i)).toBeTruthy();
   });
 });

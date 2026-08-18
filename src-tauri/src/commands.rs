@@ -366,10 +366,15 @@ pub struct SettingsInput {
     pub call_detection_cooldown_minutes: Option<u64>,
     pub call_detection_poll_interval_secs: Option<u64>,
     pub telemetry_enabled: Option<bool>,
+    pub start_at_login: Option<bool>,
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<AppState>, input: SettingsInput) -> CmdResult<SettingsView> {
+pub fn save_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    input: SettingsInput,
+) -> CmdResult<SettingsView> {
     if let Some(ref engine) = input.transcription_engine {
         let e = engine.trim();
         if VALID_TRANSCRIPTION_ENGINES.contains(&e) && state.recording_meeting_id().is_some() {
@@ -481,6 +486,18 @@ pub fn save_settings(state: State<AppState>, input: SettingsInput) -> CmdResult<
     }
     if let Some(on) = input.auto_summarize {
         next.auto_summarize = on;
+    }
+    if let Some(on) = input.start_at_login {
+        // The login item is OS state, not just a stored preference, so it is
+        // reconciled here rather than only on next launch. A failure is logged
+        // and the preference still saved: the toggle reflecting reality on the
+        // next start is better than the whole save failing.
+        if on != next.start_at_login {
+            if let Err(e) = crate::autostart::set_enabled(&app, on) {
+                tracing::warn!("could not update the login item: {e}");
+            }
+        }
+        next.start_at_login = on;
     }
     if let Some(on) = input.call_detection_enabled {
         next.call_detection_enabled = on;

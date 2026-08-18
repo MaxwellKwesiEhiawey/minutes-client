@@ -112,6 +112,8 @@ export interface SettingsView {
   call_detection_poll_interval_secs: number;
   call_detection_apps: string[];
   call_detection_supported: boolean;
+  /** Whether a login item is registered, so the app runs (and detects) from boot. */
+  start_at_login: boolean;
   share_supported: boolean;
   telemetry_enabled: boolean;
   server_url_from_env: boolean;

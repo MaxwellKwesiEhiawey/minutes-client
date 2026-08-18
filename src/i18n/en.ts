@@ -405,6 +405,11 @@ export const en = {
     "What is sent: feature usage counts, duration ranges, error categories, app version, operating system and version, CPU type and core count, and a random install ID you can reset. What is never sent: your recordings, transcripts, summaries, meeting titles, participant names, file paths, or anything you type or say. If the app is offline, reports wait in a small file on this device and are sent later. Reports are kept for 12 months. Turning this off stops all reporting immediately, deletes anything still waiting on this device, and deletes the install ID.",
 
   /* ---------------- Settings: advanced ---------------- */
+  "settings.startAtLogin": "Start at login",
+  "settings.startAtLoginHint":
+    "Runs Minutes in the background from login so meetings are detected before you open the app.",
+  "settings.startAtLoginHintNoDetection":
+    "Runs Minutes in the background from login so it is ready immediately. Meeting auto-detection is macOS-only.",
   "settings.serverUrl": "Server URL",
   "settings.serverUrlLocked":
     "Locked — configured at build time from CI ({url}).",

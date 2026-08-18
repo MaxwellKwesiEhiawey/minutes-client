@@ -1,4 +1,5 @@
 mod audio;
+mod autostart;
 mod call_detect;
 mod commands;
 mod db;
@@ -21,6 +22,7 @@ mod share;
 mod state;
 mod summary;
 mod telemetry;
+mod tray;
 mod vault_export;
 
 use state::AppState;
@@ -207,6 +209,10 @@ pub fn run() {
             tracing::info!("second instance attempted; focusing the running window");
             prompt_window::focus_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![tray::HIDDEN_FLAG]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -338,7 +344,24 @@ pub fn run() {
                 });
             }
 
+            autostart::reconcile(handle, loaded_settings.start_at_login);
+
             call_detect::CallDetector::spawn(handle.clone());
+
+            // Detection is only useful if the process outlives its window, so
+            // the app now lives in the menu bar. Built after the detector so a
+            // tray failure cannot stop detection from starting.
+            if let Err(e) = tray::install(handle) {
+                tracing::warn!("could not create the menu bar icon: {e}");
+            }
+
+            // A login start should not throw a window in the user's face; the
+            // point is that Minutes is already there when a call begins.
+            if tray::started_hidden() {
+                tracing::info!("started by the login item; staying in the menu bar");
+            } else {
+                tray::show_main_window(handle);
+            }
 
             Ok(())
         })
@@ -377,9 +400,41 @@ pub fn run() {
             prompt_window::start_recording_from_prompt,
             prompt_window::dismiss_meeting_prompt,
         ])
+        .on_window_event(|window, event| {
+            // Closing the main window hides it rather than ending the process:
+            // the call detector runs on a thread of its own and dies with the
+            // process, so quitting on close is what made detection stop the
+            // moment the window was dismissed.
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    tray::apply_activation_policy(window.app_handle());
+                }
+            }
+        })
         .build(tauri::generate_context!())
     {
-        Ok(app) => app.run(|_, _| {}),
+        Ok(app) => app.run(|app, event| {
+            // Windows and Linux end the process when the last window goes, and
+            // on macOS this also covers Cmd-Q. Quitting is deliberate only via
+            // the tray, which sets the flag before asking to exit.
+            match event {
+                // Windows and Linux end the process when the last window goes,
+                // and on macOS this also covers Cmd-Q. Quitting is deliberate
+                // only via the tray, which sets the flag before asking to exit.
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !tray::quit_requested() {
+                        api.prevent_exit();
+                        tray::apply_activation_policy(app);
+                    }
+                }
+                // Windows are only actually on screen by now, so this is the
+                // earliest point the Dock decision can be made correctly.
+                tauri::RunEvent::Ready => tray::apply_activation_policy(app),
+                _ => {}
+            }
+        }),
         Err(e) => report_fatal_startup_error(&e),
     }
 }

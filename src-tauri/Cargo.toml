@@ -18,7 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon`: the app keeps running after its window closes, so it needs a
+# menu-bar presence to be reopened or quit from.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -27,6 +29,7 @@ tauri-plugin-clipboard-manager = "2"
 # can quarantine the file another process holds open, and
 # `migrate_plaintext_to_encrypted` renames over the live path with no locking.
 tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
