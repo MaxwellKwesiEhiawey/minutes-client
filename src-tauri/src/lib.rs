@@ -112,6 +112,13 @@ fn migrate_identifier_dir(new_dir: &std::path::Path, legacy_identifier: &str) ->
             moved.push(name.to_string_lossy().into_owned());
         }
     }
+
+    // Leave nothing named after the old identifier sitting in the user's
+    // Application Support. `remove_dir` refuses a non-empty directory, which is
+    // the wanted behaviour rather than a limitation: anything still in there
+    // failed to move and must not be deleted.
+    let _ = std::fs::remove_dir(&legacy_dir);
+
     moved
 }
 
@@ -633,6 +640,37 @@ mod tests {
                 std::fs::read_to_string(new.join("desksec.db")).unwrap(),
                 "meetings"
             );
+        }
+
+        #[test]
+        fn the_emptied_legacy_directory_is_removed() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "desksec.db", "meetings");
+            std::fs::create_dir_all(&new).unwrap();
+
+            migrate_identifier_dir(&new, "com.desksec.app");
+
+            assert!(
+                !old.exists(),
+                "an empty folder named after the old brand should not be left in Application Support"
+            );
+        }
+
+        #[test]
+        fn a_legacy_directory_that_still_holds_something_is_left_alone() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "settings.json", "stale");
+            write(&new, "settings.json", "current");
+
+            migrate_identifier_dir(&new, "com.desksec.app");
+
+            // Nothing moved, because the new identifier already had that file.
+            // Deleting the directory here would throw away the only other copy.
+            assert!(old.join("settings.json").exists());
         }
 
         #[test]

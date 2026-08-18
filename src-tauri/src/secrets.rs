@@ -10,18 +10,49 @@ const SERVICE: &str = "com.minutes.app";
 /// forward, so a user who skips a version still recovers.
 const LEGACY_SERVICE_DESKSEC: &str = "com.desksec.app";
 const LEGACY_SERVICE_PARLEY: &str = "app.parley.desktop";
-const ACCOUNT_TOKEN: &str = "desksec-server-token";
-const LEGACY_ACCOUNT_TOKEN: &str = "parley-server-token";
-const ACCOUNT_API_URL: &str = "desksec-server-url";
-const LEGACY_ACCOUNT_API_URL: &str = "parley-server-url";
-const ACCOUNT_DB_KEY: &str = "desksec-db-key";
+const ACCOUNT_TOKEN: &str = "minutes-server-token";
+const ACCOUNT_API_URL: &str = "minutes-server-url";
+const ACCOUNT_DB_KEY: &str = "minutes-db-key";
+
+/// Account names from before the rename. Kept so the values can be carried
+/// forward and the old entries deleted — otherwise Keychain Access keeps
+/// showing `desksec-…` to users of an app that no longer goes by that name.
+const DESKSEC_ACCOUNT_TOKEN: &str = "desksec-server-token";
+const DESKSEC_ACCOUNT_API_URL: &str = "desksec-server-url";
+const DESKSEC_ACCOUNT_DB_KEY: &str = "desksec-db-key";
+const DESKSEC_ACCOUNT_DEVICE_TOKEN: &str = "desksec-device-token";
+const DESKSEC_ACCOUNT_DEVICE_ID: &str = "desksec-device-id";
+const PARLEY_ACCOUNT_TOKEN: &str = "parley-server-token";
+const PARLEY_ACCOUNT_API_URL: &str = "parley-server-url";
 // Per-device credentials issued by the server (see `crate::device`). Kept in
 // slots of their own rather than reusing ACCOUNT_TOKEN, because
 // `settings::apply_embedded_server_config` rewrites that slot from the
 // CI-embedded value on *every* launch — a provisioned token stored there would
 // be silently destroyed on the next start.
-const ACCOUNT_DEVICE_TOKEN: &str = "desksec-device-token";
-const ACCOUNT_DEVICE_ID: &str = "desksec-device-id";
+const ACCOUNT_DEVICE_TOKEN: &str = "minutes-device-token";
+const ACCOUNT_DEVICE_ID: &str = "minutes-device-id";
+
+/// Where a secret may be sitting from a previous build, newest first.
+///
+/// Three generations, and the middle one is the easy mistake: the identifier
+/// rename shipped before the account rename, so an install that ran that build
+/// holds items under the *new* service with the *old* account name. Omitting
+/// that pair would strand exactly those users.
+fn legacy_locations(
+    desksec_account: &'static str,
+    parley_account: Option<&'static str>,
+) -> Vec<(&'static str, &'static str)> {
+    let mut locations = vec![
+        // Identifier already renamed, accounts not yet.
+        (SERVICE, desksec_account),
+        // Before the identifier rename.
+        (LEGACY_SERVICE_DESKSEC, desksec_account),
+    ];
+    if let Some(account) = parley_account {
+        locations.push((LEGACY_SERVICE_PARLEY, account));
+    }
+    locations
+}
 
 fn entry(service: &str, account: &str) -> Result<Entry> {
     Entry::new(service, account).context("failed to open OS credential store")
@@ -70,10 +101,7 @@ fn set_secret(account: &str, value: &str) -> Result<()> {
 pub fn get_token() -> Result<Option<String>> {
     get_secret(
         ACCOUNT_TOKEN,
-        &[
-            (LEGACY_SERVICE_DESKSEC, ACCOUNT_TOKEN),
-            (LEGACY_SERVICE_PARLEY, LEGACY_ACCOUNT_TOKEN),
-        ],
+        &legacy_locations(DESKSEC_ACCOUNT_TOKEN, Some(PARLEY_ACCOUNT_TOKEN)),
     )
 }
 
@@ -89,7 +117,7 @@ pub fn set_token(token: &str) -> Result<()> {
 pub fn get_device_token() -> Result<Option<String>> {
     get_secret(
         ACCOUNT_DEVICE_TOKEN,
-        &[(LEGACY_SERVICE_DESKSEC, ACCOUNT_DEVICE_TOKEN)],
+        &legacy_locations(DESKSEC_ACCOUNT_DEVICE_TOKEN, None),
     )
 }
 
@@ -102,7 +130,7 @@ pub fn set_device_token(token: &str) -> Result<()> {
 pub fn get_device_id() -> Result<Option<String>> {
     get_secret(
         ACCOUNT_DEVICE_ID,
-        &[(LEGACY_SERVICE_DESKSEC, ACCOUNT_DEVICE_ID)],
+        &legacy_locations(DESKSEC_ACCOUNT_DEVICE_ID, None),
     )
 }
 
@@ -129,10 +157,7 @@ pub fn clear_device_credentials() -> Result<()> {
 pub fn get_api_url() -> Result<Option<String>> {
     get_secret(
         ACCOUNT_API_URL,
-        &[
-            (LEGACY_SERVICE_DESKSEC, ACCOUNT_API_URL),
-            (LEGACY_SERVICE_PARLEY, LEGACY_ACCOUNT_API_URL),
-        ],
+        &legacy_locations(DESKSEC_ACCOUNT_API_URL, Some(PARLEY_ACCOUNT_API_URL)),
     )
 }
 
@@ -177,23 +202,27 @@ pub enum DbKeyStatus {
 /// The copy is written before the original is removed, and a failed write
 /// abandons the migration with the original intact: a key that exists in
 /// neither place is an unopenable database.
-fn migrate_db_key_from(legacy_service: &str, current: &Entry) -> Result<Option<String>, String> {
-    let legacy = match Entry::new(legacy_service, ACCOUNT_DB_KEY) {
-        Ok(entry) => entry,
-        Err(e) => return Err(format!("could not open {legacy_service}: {e}")),
-    };
-    let value = match legacy.get_password() {
-        Ok(value) => value,
-        Err(keyring::Error::NoEntry) => return Ok(None),
-        Err(e) => return Err(format!("could not read {legacy_service}: {e}")),
-    };
-    if let Err(e) = current.set_password(&value) {
-        return Err(format!("could not carry the database key forward: {e}"));
+fn migrate_db_key(current: &Entry) -> Result<Option<String>, String> {
+    for (service, account) in legacy_locations(DESKSEC_ACCOUNT_DB_KEY, None) {
+        let Ok(legacy) = Entry::new(service, account) else {
+            continue;
+        };
+        let value = match legacy.get_password() {
+            Ok(value) => value,
+            Err(keyring::Error::NoEntry) => continue,
+            // Unreadable is not absent. Stop rather than fall through to a
+            // later candidate and risk concluding the key is gone.
+            Err(e) => return Err(format!("could not read {service}/{account}: {e}")),
+        };
+        if let Err(e) = current.set_password(&value) {
+            return Err(format!("could not carry the database key forward: {e}"));
+        }
+        // Only now is it safe to drop the old copy.
+        let _ = legacy.delete_credential();
+        tracing::info!("migrated the database key from {service}/{account}");
+        return Ok(Some(value));
     }
-    // Only now is it safe to drop the old copy.
-    let _ = legacy.delete_credential();
-    tracing::info!("migrated the database key from {legacy_service}");
-    Ok(Some(value))
+    Ok(None)
 }
 
 /// Get the local database's SQLCipher passphrase from the OS credential store,
@@ -219,7 +248,7 @@ pub fn get_or_create_db_key(may_mint: bool) -> DbKeyStatus {
             // anything: `Lost` makes `db::open_or_recover` move the database
             // aside and start empty, which would turn a rename into data loss
             // for every existing user.
-            match migrate_db_key_from(LEGACY_SERVICE_DESKSEC, &e) {
+            match migrate_db_key(&e) {
                 Ok(Some(value)) => return DbKeyStatus::Available(value),
                 Ok(None) => {}
                 // Unreadable is not the same as absent — say so, so the
@@ -246,5 +275,67 @@ pub fn get_or_create_db_key(may_mint: bool) -> DbKeyStatus {
         Err(err) => DbKeyStatus::Unavailable(format!(
             "failed to read database key from OS credential store: {err}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_generation_of_a_secret_can_be_found() {
+        let places = legacy_locations(DESKSEC_ACCOUNT_TOKEN, Some(PARLEY_ACCOUNT_TOKEN));
+        assert_eq!(
+            places,
+            vec![
+                // The identifier rename shipped before the account rename, so
+                // this pairing exists in the wild and is the easiest to forget.
+                ("com.minutes.app", "desksec-server-token"),
+                ("com.desksec.app", "desksec-server-token"),
+                ("app.parley.desktop", "parley-server-token"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_secret_that_postdates_parley_does_not_look_there() {
+        let places = legacy_locations(DESKSEC_ACCOUNT_DEVICE_TOKEN, None);
+        assert_eq!(places.len(), 2);
+        assert!(
+            !places
+                .iter()
+                .any(|(service, _)| *service == LEGACY_SERVICE_PARLEY),
+            "device credentials postdate that rename; looking there is a pointless keychain read"
+        );
+    }
+
+    #[test]
+    fn the_current_location_is_never_in_the_fallback_list() {
+        // get_secret reads the live location first; repeating it here would
+        // migrate a value onto itself and then delete it.
+        for places in [
+            legacy_locations(DESKSEC_ACCOUNT_TOKEN, Some(PARLEY_ACCOUNT_TOKEN)),
+            legacy_locations(DESKSEC_ACCOUNT_DB_KEY, None),
+        ] {
+            assert!(!places.contains(&(SERVICE, ACCOUNT_TOKEN)));
+            assert!(!places.contains(&(SERVICE, ACCOUNT_DB_KEY)));
+        }
+    }
+
+    #[test]
+    fn no_current_account_name_still_carries_the_old_brand() {
+        for account in [
+            ACCOUNT_TOKEN,
+            ACCOUNT_API_URL,
+            ACCOUNT_DB_KEY,
+            ACCOUNT_DEVICE_TOKEN,
+            ACCOUNT_DEVICE_ID,
+        ] {
+            assert!(
+                !account.contains("desksec"),
+                "{account} would show as desksec in Keychain Access"
+            );
+        }
+        assert!(!SERVICE.contains("desksec"));
     }
 }
