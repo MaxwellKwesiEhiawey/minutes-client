@@ -471,6 +471,8 @@ export const it: Translations = {
   "error.stopBeforeDeletingModels": "Interrompi la registrazione prima di eliminare i modelli.",
 
   "error.serverTokenMissing": "Il token di accesso al server Minutes non è configurato. Controlla le Impostazioni o contatta l'IT.",
+  "error.deviceRevoked":
+    "L'accesso di questo dispositivo è stato revocato. Contatta il team IT per ripristinarlo.",
   "error.serverRejectedToken": "Il server Minutes ha rifiutato il token di accesso. Controlla le Impostazioni o contatta l'IT.",
   "error.onlineNotConfiguredOnServer": "La trascrizione online non è configurata sul server Minutes. Contatta l'IT.",
   "error.unknownBrowser": "Minutes non è in grado di rilevare riunioni in quel browser.",

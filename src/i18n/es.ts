@@ -462,6 +462,8 @@ export const es: Translations = {
   "error.stopBeforeDeletingModels": "Detén la grabación antes de eliminar modelos.",
 
   "error.serverTokenMissing": "El token de acceso al servidor de Minutes no está configurado. Revisa los Ajustes o contacta con TI.",
+  "error.deviceRevoked":
+    "Se ha revocado el acceso de este dispositivo. Póngase en contacto con su equipo de TI para restaurarlo.",
   "error.serverRejectedToken": "El servidor de Minutes ha rechazado el token de acceso. Revisa los Ajustes o contacta con TI.",
   "error.onlineNotConfiguredOnServer": "La transcripción en línea no está configurada en el servidor de Minutes. Contacta con TI.",
   "error.unknownBrowser": "Minutes no puede detectar reuniones en ese navegador.",

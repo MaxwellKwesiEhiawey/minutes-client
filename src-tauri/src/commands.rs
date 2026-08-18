@@ -224,9 +224,11 @@ pub async fn generate_summary(
     )
     .await;
 
-    // A device token that has stopped being accepted usually means the server's
-    // device registry was lost or restored from a backup. Registering again
-    // turns a permanent failure for every client into one retried request.
+    // Only the unknown-token case is retried. It means the server's device
+    // registry was lost or restored from a backup, and registering again turns
+    // a permanent failure for every client into one retried request.
+    // `DeviceRevoked` is deliberately excluded: re-registering there would let
+    // a revoked device enrol itself again and undo the revocation.
     if matches!(attempt, Err(summary::SummaryError::Unauthorized)) {
         tracing::warn!("device token rejected during summary; re-registering");
         if let Ok(token) = crate::device::reregister(&state.http, &settings).await {

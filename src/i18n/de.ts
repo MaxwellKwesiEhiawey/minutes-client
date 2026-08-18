@@ -473,6 +473,8 @@ export const de: Translations = {
   "error.stopBeforeDeletingModels": "Beenden Sie die Aufzeichnung, bevor Sie Modelle löschen.",
 
   "error.serverTokenMissing": "Das Zugriffstoken für den Minutes-Server ist nicht eingerichtet. Prüfen Sie die Einstellungen oder wenden Sie sich an die IT.",
+  "error.deviceRevoked":
+    "Der Zugriff dieses Geräts wurde widerrufen. Wenden Sie sich an Ihr IT-Team, um ihn wiederherzustellen.",
   "error.serverRejectedToken": "Der Minutes-Server hat das Zugriffstoken abgelehnt. Prüfen Sie die Einstellungen oder wenden Sie sich an die IT.",
   "error.onlineNotConfiguredOnServer": "Die Online-Transkription ist auf dem Minutes-Server nicht eingerichtet. Wenden Sie sich an die IT.",
   "error.unknownBrowser": "In diesem Browser kann Minutes keine Besprechungen erkennen.",

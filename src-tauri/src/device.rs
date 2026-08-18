@@ -318,6 +318,21 @@ mod tests {
         }
     }
 
+    /// The bootstrap token is what registration presents, so 401 and 403 both
+    /// mean "this build's shared token was refused" here. The revoked/unknown
+    /// distinction lives on the *device* token paths — the summary call and the
+    /// live stream — not on this one.
+    #[tokio::test]
+    async fn registration_treats_both_refusals_as_a_rejected_bootstrap_token() {
+        for status in [401u16, 403] {
+            let stub = stub(status, "{}").await;
+            let err = fetch_registration(&reqwest::Client::new(), &stub.url, "nope")
+                .await
+                .expect_err("{status} must fail");
+            assert_eq!(err.code, Some("error.serverRejectedToken"));
+        }
+    }
+
     #[tokio::test]
     async fn a_server_without_the_endpoint_says_so() {
         let stub = stub(404, "{}").await;

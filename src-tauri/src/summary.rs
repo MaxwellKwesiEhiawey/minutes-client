@@ -17,6 +17,12 @@ pub enum SummaryError {
     Network(#[from] reqwest::Error),
     #[error("unauthorized")]
     Unauthorized,
+    /// The server recognised this device and refuses it. Distinct from
+    /// [`Unauthorized`](SummaryError::Unauthorized) because the caller
+    /// re-registers on that one, and a revoked device doing so would simply
+    /// enrol itself again.
+    #[error("device revoked")]
+    DeviceRevoked,
     #[error("{0}")]
     Server(String),
 }
@@ -77,7 +83,10 @@ pub async fn summarize(
         // Response bodies may echo transcript or summary content. Keep them
         // out of persistent local logs and record only non-sensitive metadata.
         tracing::warn!("summary request failed ({status})");
-        if status.as_u16() == 401 || status.as_u16() == 403 {
+        if status.as_u16() == 403 {
+            return Err(SummaryError::DeviceRevoked);
+        }
+        if status.as_u16() == 401 {
             return Err(SummaryError::Unauthorized);
         }
         return Err(SummaryError::Server(format!(

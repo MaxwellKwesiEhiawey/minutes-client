@@ -470,6 +470,8 @@ export const nl: Translations = {
   "error.stopBeforeDeletingModels": "Stop de opname voordat je modellen verwijdert.",
 
   "error.serverTokenMissing": "Het toegangstoken voor de Minutes-server is niet ingesteld. Bekijk Instellingen of neem contact op met IT.",
+  "error.deviceRevoked":
+    "De toegang van dit apparaat is ingetrokken. Neem contact op met uw IT-team om deze te herstellen.",
   "error.serverRejectedToken": "De Minutes-server heeft het toegangstoken geweigerd. Bekijk Instellingen of neem contact op met IT.",
   "error.onlineNotConfiguredOnServer": "Online transcriptie is niet ingesteld op de Minutes-server. Neem contact op met IT.",
   "error.unknownBrowser": "In die browser kan Minutes geen vergaderingen herkennen.",
