@@ -2,6 +2,7 @@ mod audio;
 mod call_detect;
 mod commands;
 mod db;
+mod device;
 mod docx_export;
 mod error;
 mod local_transcribe;

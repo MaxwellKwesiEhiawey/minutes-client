@@ -677,6 +677,12 @@ pub struct SettingsView {
     pub server_token_present: bool,
     pub server_token_from_env: bool,
     pub server_token_from_build: bool,
+    /// Server-assigned id for this install, once registered.
+    ///
+    /// Shown read-only in Settings because revoking a device server-side means
+    /// naming its id — without this there is no way for a user to tell support
+    /// which row to revoke.
+    pub device_id: Option<String>,
 }
 
 impl Settings {
@@ -715,6 +721,7 @@ impl Settings {
             server_token_present: self.server_token().is_some(),
             server_token_from_env: token_env,
             server_token_from_build: token_embedded,
+            device_id: crate::secrets::get_device_id().ok().flatten(),
         }
     }
 }

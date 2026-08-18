@@ -186,12 +186,11 @@ pub async fn generate_summary(
     if segments.is_empty() {
         return Err("no transcript available to summarize".to_string().into());
     }
-    let server_token = settings.server_token().ok_or_else(|| {
-        "Minutes server token is not configured (Settings or DESKSEC_TOKEN in .env)".to_string()
-    })?;
     let server_url = settings.server_url();
     // Never send the token + transcript over cleartext to a remote host.
     settings::validate_server_url(&server_url)?;
+    // Registers this install on first use; afterwards this is a keychain read.
+    let server_token = crate::device::auth_token(&state.http, &settings).await?;
 
     // Include speaker labels in the transcript we send for summarization so the
     // AI can attribute decisions and action items to the right person.
@@ -214,7 +213,7 @@ pub async fn generate_summary(
     // only the category; the message can embed URLs or other environment
     // details and is never sent.
     let started = std::time::Instant::now();
-    let content = match summary::summarize(
+    let mut attempt = summary::summarize(
         &state.http,
         &server_url,
         &server_token,
@@ -223,8 +222,28 @@ pub async fn generate_summary(
         merged_instructions.as_deref(),
         &settings.summary_language,
     )
-    .await
-    {
+    .await;
+
+    // A device token that has stopped being accepted usually means the server's
+    // device registry was lost or restored from a backup. Registering again
+    // turns a permanent failure for every client into one retried request.
+    if matches!(attempt, Err(summary::SummaryError::Unauthorized)) {
+        tracing::warn!("device token rejected during summary; re-registering");
+        if let Ok(token) = crate::device::reregister(&state.http, &settings).await {
+            attempt = summary::summarize(
+                &state.http,
+                &server_url,
+                &token,
+                &settings.anthropic_model,
+                &transcript,
+                merged_instructions.as_deref(),
+                &settings.summary_language,
+            )
+            .await;
+        }
+    }
+
+    let content = match attempt {
         Ok(content) => content,
         Err(e) => {
             let err = CategorizedError::from(e);
@@ -768,20 +787,20 @@ async fn transcription_status_for_deepgram(
     http: &reqwest::Client,
     settings: &settings::Settings,
 ) -> TranscriptionStatus {
+    // A bootstrap token is enough to *be able* to reach the server: the device
+    // token is minted on demand from it.
     let token_ok = settings.server_token().is_some();
     let mut model = "deepgram".to_string();
     let mut configured = false;
 
     if token_ok {
-        if let Ok(status) = crate::remote_transcribe::fetch_status(
-            http,
-            &settings.server_url(),
-            settings.server_token().as_deref().unwrap_or(""),
-        )
-        .await
-        {
-            configured = status.configured;
-            model = status.model;
+        if let Ok(token) = crate::device::auth_token(http, settings).await {
+            if let Ok(status) =
+                crate::remote_transcribe::fetch_status(http, &settings.server_url(), &token).await
+            {
+                configured = status.configured;
+                model = status.model;
+            }
         }
     }
 

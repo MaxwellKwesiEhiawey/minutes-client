@@ -2596,6 +2596,23 @@ mark {
   box-shadow: var(--focus-ring);
 }
 
+/* Read-only identifier a user may need to read out or copy (device id).
+   Sized to match .st-input so it lines up with the controls above it. */
+.st-readonly {
+  width: 260px;
+  padding: 0 10px;
+  line-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+  user-select: all;
+}
+
 .st-note {
   padding-top: 14px;
 }

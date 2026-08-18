@@ -1222,6 +1222,14 @@ export function SettingsScreen({
                         : t("settings.tokenMissing")
                 }
               />
+              {current.device_id && (
+                <Row
+                  label={t("settings.deviceId")}
+                  hint={t("settings.deviceIdHint")}
+                >
+                  <code className="st-readonly">{current.device_id}</code>
+                </Row>
+              )}
               <Row label={t("settings.summaryModel")} htmlFor="anthropic-model">
                 <input
                   id="anthropic-model"

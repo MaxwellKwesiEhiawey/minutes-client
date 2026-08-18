@@ -405,6 +405,9 @@ export const nl: Translations = {
     "Opgeslagen in de sleutelhanger van het systeem.",
   "settings.tokenMissing":
     "Zet DESKSEC_TOKEN in .env (zie .env.example) voor AI-samenvattingen.",
+  "settings.deviceId": "Apparaat-ID",
+  "settings.deviceIdHint":
+    "Identificeert deze installatie bij de server. Geef dit door aan IT om de toegang van dit apparaat te laten intrekken.",
   "settings.summaryModel": "Model voor samenvattingen",
   "settings.chunkLength": "Bloklengte",
   "settings.chunkLengthHint":

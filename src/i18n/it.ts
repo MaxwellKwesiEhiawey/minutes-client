@@ -406,6 +406,9 @@ export const it: Translations = {
   "settings.tokenInKeychain": "Salvato nel keychain del sistema.",
   "settings.tokenMissing":
     "Imposta DESKSEC_TOKEN in .env (vedi .env.example) per i riepiloghi con IA.",
+  "settings.deviceId": "ID dispositivo",
+  "settings.deviceIdHint":
+    "Identifica questa installazione sul server. Comunicalo all'IT per richiedere la revoca dell'accesso di questo dispositivo.",
   "settings.summaryModel": "Modello per i riepiloghi",
   "settings.chunkLength": "Lunghezza del blocco",
   "settings.chunkLengthHint":

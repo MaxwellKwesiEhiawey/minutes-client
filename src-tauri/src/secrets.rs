@@ -8,6 +8,13 @@ const LEGACY_ACCOUNT_TOKEN: &str = "parley-server-token";
 const ACCOUNT_API_URL: &str = "desksec-server-url";
 const LEGACY_ACCOUNT_API_URL: &str = "parley-server-url";
 const ACCOUNT_DB_KEY: &str = "desksec-db-key";
+// Per-device credentials issued by the server (see `crate::device`). Kept in
+// slots of their own rather than reusing ACCOUNT_TOKEN, because
+// `settings::apply_embedded_server_config` rewrites that slot from the
+// CI-embedded value on *every* launch — a provisioned token stored there would
+// be silently destroyed on the next start.
+const ACCOUNT_DEVICE_TOKEN: &str = "desksec-device-token";
+const ACCOUNT_DEVICE_ID: &str = "desksec-device-id";
 
 fn entry(service: &str, account: &str) -> Result<Entry> {
     Entry::new(service, account).context("failed to open OS credential store")
@@ -45,6 +52,51 @@ pub fn get_token() -> Result<Option<String>> {
 /// Persist the Minutes bearer token in the OS credential store.
 pub fn set_token(token: &str) -> Result<()> {
     set_secret(ACCOUNT_TOKEN, token)
+}
+
+/// Read this install's device token from the OS credential store.
+///
+/// Unlike [`get_token`] there is no legacy fallback: device registration
+/// postdates the `app.parley.desktop` rename, so a value can never exist there.
+pub fn get_device_token() -> Result<Option<String>> {
+    read_optional(ACCOUNT_DEVICE_TOKEN)
+}
+
+/// Persist this install's device token in the OS credential store.
+pub fn set_device_token(token: &str) -> Result<()> {
+    set_secret(ACCOUNT_DEVICE_TOKEN, token)
+}
+
+/// Read this install's server-assigned device id.
+pub fn get_device_id() -> Result<Option<String>> {
+    read_optional(ACCOUNT_DEVICE_ID)
+}
+
+/// Persist this install's server-assigned device id.
+pub fn set_device_id(id: &str) -> Result<()> {
+    set_secret(ACCOUNT_DEVICE_ID, id)
+}
+
+/// Forget the device credentials so the next request registers afresh.
+///
+/// Called when the server rejects the device token — the registry may have been
+/// restored from a backup, or the device revoked and later re-approved.
+pub fn clear_device_credentials() -> Result<()> {
+    for account in [ACCOUNT_DEVICE_TOKEN, ACCOUNT_DEVICE_ID] {
+        match entry(SERVICE, account)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(e).context("failed to clear device credentials"),
+        }
+    }
+    Ok(())
+}
+
+fn read_optional(account: &str) -> Result<Option<String>> {
+    match entry(SERVICE, account)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e).context("failed to read from OS credential store"),
+    }
 }
 
 /// Read the Minutes server URL from the OS credential store.

@@ -418,6 +418,9 @@ export const en = {
   "settings.tokenInKeychain": "Stored in the OS keychain.",
   "settings.tokenMissing":
     "Set DESKSEC_TOKEN in .env (see .env.example) for AI summaries.",
+  "settings.deviceId": "Device ID",
+  "settings.deviceIdHint":
+    "Identifies this install to the server. Quote it to IT when asking for this device's access to be revoked.",
   "settings.summaryModel": "Summary model",
   "settings.chunkLength": "Chunk length",
   "settings.chunkLengthHint":

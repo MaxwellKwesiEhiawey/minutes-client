@@ -404,6 +404,9 @@ export const fr: Translations = {
   "settings.tokenInKeychain": "Stocké dans le trousseau du système.",
   "settings.tokenMissing":
     "Définissez DESKSEC_TOKEN dans .env (voir .env.example) pour les résumés par IA.",
+  "settings.deviceId": "Identifiant de l'appareil",
+  "settings.deviceIdHint":
+    "Identifie cette installation auprès du serveur. Communiquez-le au service informatique pour faire révoquer l'accès de cet appareil.",
   "settings.summaryModel": "Modèle de résumé",
   "settings.chunkLength": "Longueur des blocs",
   "settings.chunkLengthHint":

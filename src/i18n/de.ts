@@ -408,6 +408,9 @@ export const de: Translations = {
   "settings.tokenInKeychain": "Im Schlüsselbund des Systems gespeichert.",
   "settings.tokenMissing":
     "Setzen Sie DESKSEC_TOKEN in der .env-Datei (siehe .env.example) für KI-Zusammenfassungen.",
+  "settings.deviceId": "Geräte-ID",
+  "settings.deviceIdHint":
+    "Identifiziert diese Installation gegenüber dem Server. Geben Sie sie der IT an, wenn der Zugriff dieses Geräts widerrufen werden soll.",
   "settings.summaryModel": "Modell für Zusammenfassungen",
   "settings.chunkLength": "Blocklänge",
   "settings.chunkLengthHint":

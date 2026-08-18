@@ -399,6 +399,9 @@ export const pt: Translations = {
   "settings.tokenInKeychain": "Guardado no porta-chaves do sistema.",
   "settings.tokenMissing":
     "Defina DESKSEC_TOKEN no .env (ver .env.example) para os resumos com IA.",
+  "settings.deviceId": "ID do dispositivo",
+  "settings.deviceIdHint":
+    "Identifica esta instalação para o servidor. Informe-o à TI para solicitar a revogação do acesso deste dispositivo.",
   "settings.summaryModel": "Modelo de resumo",
   "settings.chunkLength": "Duração do bloco",
   "settings.chunkLengthHint":

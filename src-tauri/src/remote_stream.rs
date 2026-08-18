@@ -102,6 +102,16 @@ fn persist_final_line(
     }
 }
 
+/// Whether a failed handshake was rejected for authentication rather than, say,
+/// an unreachable host — the only case worth re-registering for.
+fn handshake_unauthorized<T>(result: &Result<T, tokio_tungstenite::tungstenite::Error>) -> bool {
+    matches!(
+        result,
+        Err(tokio_tungstenite::tungstenite::Error::Http(resp))
+            if resp.status() == 401 || resp.status() == 403
+    )
+}
+
 /// Stream captured audio to the Minutes server and emit partial/final transcript events.
 pub async fn run_live_stream(
     app: AppHandle,
@@ -111,17 +121,21 @@ pub async fn run_live_stream(
     sample_rate: u32,
     settings: crate::settings::Settings,
 ) {
-    let token = match settings.server_token() {
-        Some(t) => t,
-        None => {
+    // Registering needs an HTTP client; this path is otherwise pure WebSocket.
+    // Built here rather than reaching into AppState so `run_live_stream` keeps
+    // taking a plain `Settings` and stays callable from the tests below.
+    let http = reqwest::Client::new();
+    let token = match crate::device::auth_token(&http, &settings).await {
+        Ok(t) => t,
+        Err(e) => {
             let _ = app.emit(
                 EV_ERROR,
                 json!({
                     "meetingId": meeting_id,
                     // Same contract as `CategorizedError::coded`: the UI
                     // translates `code` and keeps `message` as the fallback.
-                    "code": "error.serverTokenMissing",
-                    "message": "Minutes server token is not configured",
+                    "code": e.code.unwrap_or("error.serverTokenMissing"),
+                    "message": e.message,
                 }),
             );
             return;
@@ -140,27 +154,49 @@ pub async fn run_live_stream(
         }
     };
 
-    let mut request = match url.into_client_request() {
+    // Errors are flattened to a String here rather than carried as a
+    // tungstenite::Error: that enum is 136 bytes, and clippy's
+    // `result_large_err` (denied in CI) rejects returning it by value.
+    let build_request = |bearer: &str| -> Result<_, String> {
+        let mut request = url
+            .clone()
+            .into_client_request()
+            .map_err(|e| e.to_string())?;
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {bearer}"))
+                .unwrap_or_else(|_| HeaderValue::from_static("Bearer")),
+        );
+        Ok(request)
+    };
+
+    let request = match build_request(&token) {
         Ok(r) => r,
         Err(e) => {
-            let _ = app.emit(
-                EV_ERROR,
-                json!({ "meetingId": meeting_id, "message": e.to_string() }),
-            );
+            let _ = app.emit(EV_ERROR, json!({ "meetingId": meeting_id, "message": e }));
             return;
         }
     };
-    request.headers_mut().insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {token}"))
-            .unwrap_or_else(|_| HeaderValue::from_static("Bearer")),
-    );
 
     // A wss:// handshake panics on the worker thread without a rustls provider,
     // which is silent from here — the transcript just never arrives.
     crate::install_tls_provider();
 
-    let (ws_stream, _resp) = match connect_async(request).await {
+    let mut attempt = connect_async(request).await;
+
+    // Same reasoning as the summary path: a device token the server no longer
+    // recognises (registry lost or restored) is recoverable by registering
+    // again, so spend one retry on it rather than failing the recording.
+    if handshake_unauthorized(&attempt) {
+        tracing::warn!("device token rejected by live stream; re-registering");
+        if let Ok(fresh) = crate::device::reregister(&http, &settings).await {
+            if let Ok(retry) = build_request(&fresh) {
+                attempt = connect_async(retry).await;
+            }
+        }
+    }
+
+    let (ws_stream, _resp) = match attempt {
         Ok(pair) => pair,
         Err(e) => {
             let _ = app.emit(

@@ -119,6 +119,8 @@ export interface SettingsView {
   server_token_present: boolean;
   server_token_from_env: boolean;
   server_token_from_build: boolean;
+  /** Server-assigned id for this install; null until it has registered. */
+  device_id: string | null;
 }
 
 export interface SettingsInput {
