@@ -388,7 +388,7 @@ export const es: Translations = {
   "settings.startAtLoginHint":
     "Ejecuta Minutes en segundo plano desde el inicio de sesión para detectar reuniones antes de que abra la aplicación.",
   "settings.startAtLoginHintNoDetection":
-    "Ejecuta Minutes en segundo plano desde el inicio de sesión para que esté listo de inmediato. La detección automática de reuniones solo está disponible en macOS.",
+    "Ejecuta Minutes en segundo plano desde el inicio de sesión para que esté listo de inmediato. La detección automática de reuniones no está disponible en esta plataforma.",
   "settings.serverUrl": "URL del servidor",
   "settings.serverUrlLocked":
     "Bloqueado: configurado en la compilación por CI ({url}).",

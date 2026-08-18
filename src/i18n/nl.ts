@@ -395,7 +395,7 @@ export const nl: Translations = {
   "settings.startAtLoginHint":
     "Voert Minutes vanaf het aanmelden op de achtergrond uit, zodat vergaderingen worden gedetecteerd voordat u de app opent.",
   "settings.startAtLoginHintNoDetection":
-    "Voert Minutes vanaf het aanmelden op de achtergrond uit, zodat het meteen klaar is. Automatische vergaderdetectie werkt alleen op macOS.",
+    "Voert Minutes vanaf het aanmelden op de achtergrond uit, zodat het meteen klaar is. Automatische vergaderdetectie is niet beschikbaar op dit platform.",
   "settings.serverUrl": "Server-URL",
   "settings.serverUrlLocked":
     "Vergrendeld — bij het bouwen ingesteld door CI ({url}).",

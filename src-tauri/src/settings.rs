@@ -722,7 +722,10 @@ impl Settings {
             call_detection_cooldown_minutes: self.call_detection_cooldown_minutes,
             call_detection_poll_interval_secs: self.call_detection_poll_interval_secs,
             call_detection_apps: self.call_detection_apps.clone(),
-            call_detection_supported: cfg!(target_os = "macos"),
+            // Windows detects native call apps through the microphone consent
+            // store; browser meetings remain macOS-only, since finding those
+            // needs AppleScript tab probing.
+            call_detection_supported: cfg!(any(target_os = "macos", target_os = "windows")),
             start_at_login: self.start_at_login,
             share_supported: crate::share::supported(),
             telemetry_enabled: self.telemetry_enabled,

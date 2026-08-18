@@ -176,10 +176,10 @@ describe("start at login", () => {
   });
 
   it("says so plainly where it does not", () => {
-    // Windows and Linux keep the app resident but detect nothing, so the hint
-    // must not imply a feature those users will never get.
+    // Linux keeps the app resident but detects nothing, so the hint must not
+    // imply a feature those users will not get.
     renderWith("deepgram", "en", { call_detection_supported: false });
     openTab(/advanced/i);
-    expect(screen.getByText(/macOS-only/i)).toBeTruthy();
+    expect(screen.getByText(/not available on this platform/i)).toBeTruthy();
   });
 });

@@ -315,3 +315,8 @@ path = "src/main.rs"
 # toolchain available here; please confirm the next Windows CI run succeeds.
 [patch.crates-io]
 cpal = { git = "https://github.com/RustAudio/cpal", rev = "a62677dd811e39048e277e214fe22af75ecf6bf0" }
+
+# Reading the Capability Access Manager consent store, which is how Windows
+# reports that an application is currently using the microphone.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

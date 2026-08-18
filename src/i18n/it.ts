@@ -397,7 +397,7 @@ export const it: Translations = {
   "settings.startAtLoginHint":
     "Esegue Minutes in background fin dall'accesso, così le riunioni vengono rilevate prima che tu apra l'app.",
   "settings.startAtLoginHintNoDetection":
-    "Esegue Minutes in background fin dall'accesso, così è subito pronto. Il rilevamento automatico delle riunioni è disponibile solo su macOS.",
+    "Esegue Minutes in background fin dall'accesso, così è subito pronto. Il rilevamento automatico delle riunioni non è disponibile su questa piattaforma.",
   "settings.serverUrl": "URL del server",
   "settings.serverUrlLocked":
     "Bloccato: configurato in fase di build dalla CI ({url}).",

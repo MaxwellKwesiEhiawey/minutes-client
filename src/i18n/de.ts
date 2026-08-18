@@ -399,7 +399,7 @@ export const de: Translations = {
   "settings.startAtLoginHint":
     "Führt Minutes ab der Anmeldung im Hintergrund aus, damit Besprechungen erkannt werden, bevor Sie die App öffnen.",
   "settings.startAtLoginHintNoDetection":
-    "Führt Minutes ab der Anmeldung im Hintergrund aus, damit es sofort bereit ist. Die automatische Besprechungserkennung gibt es nur unter macOS.",
+    "Führt Minutes ab der Anmeldung im Hintergrund aus, damit es sofort bereit ist. Die automatische Besprechungserkennung ist auf dieser Plattform nicht verfügbar.",
   "settings.serverUrl": "Server-URL",
   "settings.serverUrlLocked":
     "Gesperrt — beim Build durch CI konfiguriert ({url}).",

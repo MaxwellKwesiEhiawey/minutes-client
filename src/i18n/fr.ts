@@ -395,7 +395,7 @@ export const fr: Translations = {
   "settings.startAtLoginHint":
     "Exécute Minutes en arrière-plan dès l'ouverture de session afin de détecter les réunions avant que vous n'ouvriez l'application.",
   "settings.startAtLoginHintNoDetection":
-    "Exécute Minutes en arrière-plan dès l'ouverture de session pour qu'il soit prêt immédiatement. La détection automatique des réunions n'existe que sur macOS.",
+    "Exécute Minutes en arrière-plan dès l'ouverture de session pour qu'il soit prêt immédiatement. La détection automatique des réunions n'est pas disponible sur cette plateforme.",
   "settings.serverUrl": "URL du serveur",
   "settings.serverUrlLocked":
     "Verrouillé — configuré au moment de la compilation par la CI ({url}).",

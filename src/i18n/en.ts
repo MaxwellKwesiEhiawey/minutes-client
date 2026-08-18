@@ -409,7 +409,7 @@ export const en = {
   "settings.startAtLoginHint":
     "Runs Minutes in the background from login so meetings are detected before you open the app.",
   "settings.startAtLoginHintNoDetection":
-    "Runs Minutes in the background from login so it is ready immediately. Meeting auto-detection is macOS-only.",
+    "Runs Minutes in the background from login so it is ready immediately. Automatic meeting detection is not available on this platform.",
   "settings.serverUrl": "Server URL",
   "settings.serverUrlLocked":
     "Locked — configured at build time from CI ({url}).",
