@@ -451,6 +451,8 @@ export const fr: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Cette réunion est en cours d'enregistrement — arrêtez-la avant de la supprimer.",
+  "error.noTranscriptCheckLanguage":
+    "L'audio parvient au serveur mais rien n'est transcrit. Vérifiez la langue de transcription dans les Réglages : elle doit correspondre à la langue parlée.",
   "error.meetingNotFound": "Cette réunion est introuvable.",
   "error.nothingToShare": "Il n'y a encore rien à partager pour cette réunion.",
   "error.shareUnsupported": "Le partage vers une autre application n'est pas disponible sur cette plateforme — enregistrez le fichier à la place.",

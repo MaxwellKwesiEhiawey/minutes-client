@@ -455,6 +455,8 @@ export const de: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Dieses Meeting wird aufgezeichnet — beenden Sie es, bevor Sie es löschen.",
+  "error.noTranscriptCheckLanguage":
+    "Audio erreicht den Server, es wird aber nichts transkribiert. Prüfen Sie die Transkriptionssprache in den Einstellungen – sie muss der gesprochenen Sprache entsprechen.",
   "error.meetingNotFound": "Dieses Meeting wurde nicht gefunden.",
   "error.nothingToShare": "Für dieses Meeting gibt es noch nichts zu teilen.",
   "error.shareUnsupported": "Das Teilen an eine andere App ist auf dieser Plattform nicht verfügbar — speichern Sie die Datei stattdessen.",

@@ -460,6 +460,8 @@ export const en = {
   "model.diarization": "Speaker identification",
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "That meeting is being recorded — stop it before deleting.",
+  "error.noTranscriptCheckLanguage":
+    "Audio is reaching the server but nothing is being transcribed. Check the transcription language in Settings — it must match the language being spoken.",
   "error.meetingNotFound": "That meeting could not be found.",
   "error.nothingToShare": "There is nothing to share for this meeting yet.",
   "error.shareUnsupported": "Sharing to another app isn't available on this platform — save the file instead.",

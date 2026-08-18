@@ -7,6 +7,7 @@ use futures_util::{SinkExt, StreamExt};
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -14,6 +15,11 @@ const EV_PARTIAL: &str = "transcript-partial";
 const EV_FINAL: &str = "transcript-final";
 const EV_ERROR: &str = "transcript-error";
 const EV_LEVEL: &str = "audio-level";
+
+/// How much *voiced* audio may go by with nothing transcribed before the user
+/// is told. Twenty seconds is long enough not to fire between "hello" and the
+/// first result, short enough that nobody records a whole meeting into silence.
+const NO_TRANSCRIPT_WARN_MS: u64 = 20_000;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::{
     connect_async,
@@ -99,6 +105,47 @@ fn persist_final_line(
                 json!({ "meetingId": meeting_id, "message": e.to_string() }),
             );
         }
+    }
+}
+
+/// Decides when a live stream is silently producing nothing.
+///
+/// Deepgram returns *no messages at all* when the requested language does not
+/// match the speech — English audio on a French model transcribes to nothing,
+/// with no error anywhere. The app then looks broken rather than misconfigured,
+/// which is exactly how an afternoon disappears. This watches for audio going
+/// out with nothing coming back and says so once.
+///
+/// It counts voiced audio rather than elapsed time on purpose: someone who
+/// starts recording and sits quietly for twenty seconds has nothing wrong with
+/// their setup, and a warning they learn to dismiss is worse than none.
+#[derive(Debug, Default)]
+struct SilenceWatch {
+    voiced_ms: u64,
+    heard: bool,
+    warned: bool,
+}
+
+impl SilenceWatch {
+    /// Note that the server sent back a transcript; disarms the warning.
+    fn heard_transcript(&mut self) {
+        self.heard = true;
+    }
+
+    /// Feed one captured batch. Returns true exactly once, on the batch that
+    /// pushes voiced audio past the threshold with nothing heard.
+    fn observe(&mut self, batch_ms: u64, voiced: bool) -> bool {
+        if self.heard || self.warned {
+            return false;
+        }
+        if voiced {
+            self.voiced_ms += batch_ms;
+        }
+        if self.voiced_ms >= NO_TRANSCRIPT_WARN_MS {
+            self.warned = true;
+            return true;
+        }
+        false
     }
 }
 
@@ -212,6 +259,11 @@ pub async fn run_live_stream(
 
     let (mut write, mut read) = ws_stream.split();
 
+    // Set by the read task, watched by the send loop below — the two run in
+    // separate tasks, so this cannot be a plain flag on `SilenceWatch`.
+    let heard = Arc::new(AtomicBool::new(false));
+    let heard_read = Arc::clone(&heard);
+
     let app_read = app.clone();
     let db_read = db.clone();
     let meeting_read = meeting_id.clone();
@@ -225,6 +277,7 @@ pub async fn run_live_stream(
                     match ev.kind.as_str() {
                         "partial" => {
                             if let Some(t) = ev.text.filter(|s| !s.trim().is_empty()) {
+                                heard_read.store(true, Ordering::Relaxed);
                                 let _ = app_read.emit(
                                     EV_PARTIAL,
                                     json!({ "meetingId": meeting_read, "text": t }),
@@ -233,6 +286,7 @@ pub async fn run_live_stream(
                         }
                         "final" => {
                             if let Some(t) = ev.text {
+                                heard_read.store(true, Ordering::Relaxed);
                                 persist_final_line(
                                     &app_read,
                                     &db_read,
@@ -270,7 +324,35 @@ pub async fn run_live_stream(
     });
 
     let mut last_level = std::time::Instant::now();
+    let mut watch = SilenceWatch::default();
     while let Some(batch) = rx.recv().await {
+        if heard.load(Ordering::Relaxed) {
+            watch.heard_transcript();
+        }
+        let batch_ms = (batch.len() as u64 * 1000) / sample_rate.max(1) as u64;
+        if watch.observe(batch_ms, !crate::audio::is_mostly_silent(&batch)) {
+            let language = match settings.transcription_language.trim() {
+                "" => "auto".to_string(),
+                other => other.to_string(),
+            };
+            tracing::warn!(
+                "no transcript after {NO_TRANSCRIPT_WARN_MS}ms of speech (language={language})"
+            );
+            let _ = app.emit(
+                EV_ERROR,
+                json!({
+                    "meetingId": meeting_id,
+                    "code": "error.noTranscriptCheckLanguage",
+                    // Fallback for a build whose dictionary predates this code.
+                    // Unlike the translated string it can name the language,
+                    // because it is not looked up.
+                    "message": format!(
+                        "Audio is reaching the server but nothing is being transcribed. Check the transcription language (currently {language}) — it must match the language being spoken."
+                    ),
+                }),
+            );
+        }
+
         if last_level.elapsed() >= std::time::Duration::from_millis(120) {
             let _ = app.emit(
                 EV_LEVEL,
@@ -297,6 +379,89 @@ pub async fn run_live_stream(
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    /// One second of audio per call keeps the arithmetic obvious.
+    const SEC: u64 = 1000;
+
+    #[test]
+    fn silence_alone_never_warns() {
+        let mut w = SilenceWatch::default();
+        // A quiet room for well past the threshold is not a fault: nobody has
+        // spoken yet, so there is nothing to transcribe.
+        for _ in 0..120 {
+            assert!(!w.observe(SEC, false));
+        }
+    }
+
+    #[test]
+    fn speech_with_nothing_coming_back_warns() {
+        let mut w = SilenceWatch::default();
+        let threshold_secs = NO_TRANSCRIPT_WARN_MS / SEC;
+        for _ in 0..threshold_secs - 1 {
+            assert!(!w.observe(SEC, true), "must not warn before the threshold");
+        }
+        assert!(
+            w.observe(SEC, true),
+            "should warn as the threshold is crossed"
+        );
+    }
+
+    #[test]
+    fn warns_only_once_per_stream() {
+        let mut w = SilenceWatch::default();
+        let mut warnings = 0;
+        for _ in 0..300 {
+            if w.observe(SEC, true) {
+                warnings += 1;
+            }
+        }
+        assert_eq!(warnings, 1, "a repeating toast is worse than no toast");
+    }
+
+    #[test]
+    fn a_transcript_before_the_threshold_disarms_it() {
+        let mut w = SilenceWatch::default();
+        for _ in 0..5 {
+            w.observe(SEC, true);
+        }
+        w.heard_transcript();
+        for _ in 0..300 {
+            assert!(
+                !w.observe(SEC, true),
+                "transcription is working; stay quiet"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transcript_after_a_warning_stops_further_ones() {
+        let mut w = SilenceWatch::default();
+        let mut warnings = 0;
+        for _ in 0..NO_TRANSCRIPT_WARN_MS / SEC {
+            if w.observe(SEC, true) {
+                warnings += 1;
+            }
+        }
+        assert_eq!(warnings, 1);
+        // Late results — the language was fixed mid-recording, say.
+        w.heard_transcript();
+        for _ in 0..300 {
+            assert!(!w.observe(SEC, true));
+        }
+    }
+
+    #[test]
+    fn interleaved_silence_does_not_count_toward_the_threshold() {
+        let mut w = SilenceWatch::default();
+        // Half the threshold in speech, then a long quiet stretch: the quiet
+        // must not push it over, or a mostly-silent meeting warns spuriously.
+        for _ in 0..NO_TRANSCRIPT_WARN_MS / SEC / 2 {
+            assert!(!w.observe(SEC, true));
+        }
+        for _ in 0..600 {
+            assert!(!w.observe(SEC, false));
+        }
+    }
 
     #[test]
     fn stream_ws_url_upgrades_scheme_and_carries_options() {

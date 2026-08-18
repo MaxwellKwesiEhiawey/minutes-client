@@ -452,6 +452,8 @@ export const nl: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Die vergadering wordt opgenomen — stop die eerst voordat je verwijdert.",
+  "error.noTranscriptCheckLanguage":
+    "Audio bereikt de server, maar er wordt niets getranscribeerd. Controleer de transcriptietaal in Instellingen — die moet overeenkomen met de gesproken taal.",
   "error.meetingNotFound": "Die vergadering is niet gevonden.",
   "error.nothingToShare": "Er is voor deze vergadering nog niets om te delen.",
   "error.shareUnsupported": "Delen naar een andere app is op dit platform niet beschikbaar — sla het bestand in plaats daarvan op.",
