@@ -1,5 +1,8 @@
 mod audio;
+mod autostart;
 mod call_detect;
+mod call_detect_linux;
+mod call_detect_win;
 mod commands;
 mod db;
 mod device;
@@ -21,6 +24,7 @@ mod share;
 mod state;
 mod summary;
 mod telemetry;
+mod tray;
 mod vault_export;
 
 use state::AppState;
@@ -73,6 +77,55 @@ fn load_env_file() {
 /// `std::process::exit`, which runs no destructors, and a leaked guard would
 /// mean the very error the dialog tells the user to look up never reaches the
 /// log file.
+/// Carry a per-identifier directory over from a previous bundle identifier.
+///
+/// `app_data_dir` and friends are derived from the identifier, so renaming it
+/// leaves the recordings, the database and `settings.json` sitting in a
+/// directory the app no longer looks at — the user sees an empty app rather
+/// than an error. Entries are moved individually and existing ones are left
+/// alone, so this is safe to run on every launch and does nothing once done.
+///
+/// Returns what it moved, for the caller to log: this runs before the tracing
+/// subscriber exists, because the log directory is inside the directory being
+/// migrated.
+fn migrate_identifier_dir(new_dir: &std::path::Path, legacy_identifier: &str) -> Vec<String> {
+    let mut moved = Vec::new();
+    let Some(parent) = new_dir.parent() else {
+        return moved;
+    };
+    let legacy_dir = parent.join(legacy_identifier);
+    if legacy_dir == new_dir || !legacy_dir.is_dir() {
+        return moved;
+    }
+    let Ok(entries) = std::fs::read_dir(&legacy_dir) else {
+        return moved;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let target = new_dir.join(&name);
+        if target.exists() {
+            // Whatever is already here was written under the new identifier and
+            // is newer than anything left behind.
+            continue;
+        }
+        if std::fs::rename(entry.path(), &target).is_ok() {
+            moved.push(name.to_string_lossy().into_owned());
+        }
+    }
+
+    // Leave nothing named after the old identifier sitting in the user's
+    // Application Support. `remove_dir` refuses a non-empty directory, which is
+    // the wanted behaviour rather than a limitation: anything still in there
+    // failed to move and must not be deleted.
+    let _ = std::fs::remove_dir(&legacy_dir);
+
+    moved
+}
+
+/// The bundle identifier before the rename to `com.minutes.app`. Per-identifier
+/// paths and keychain entries were written under this one.
+const LEGACY_IDENTIFIER: &str = "com.desksec.app";
+
 fn init_logging(data_dir: &std::path::Path) {
     let log_dir = data_dir.join("logs");
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
@@ -207,6 +260,10 @@ pub fn run() {
             tracing::info!("second instance attempted; focusing the running window");
             prompt_window::focus_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![tray::HIDDEN_FLAG]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -224,9 +281,20 @@ pub fn run() {
                 .map_err(|e| format!("could not resolve app data dir: {e}"))?;
             std::fs::create_dir_all(&data_dir).ok();
 
+            // Before anything reads from it: the identifier changed from
+            // `com.desksec.app`, and every per-identifier path moved with it.
+            let migrated = migrate_identifier_dir(&data_dir, LEGACY_IDENTIFIER);
+
             // Needs the resolved data dir (for the log file path), so this is
             // the earliest point in startup a tracing subscriber can exist.
             init_logging(&data_dir);
+
+            if !migrated.is_empty() {
+                tracing::info!(
+                    count = migrated.len(),
+                    "moved app data over from the previous bundle identifier"
+                );
+            }
 
             let db_path = data_dir.join("desksec.db");
             let legacy_db_path = data_dir.join("parley.db");
@@ -243,6 +311,12 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .map_err(|e| format!("could not resolve app config dir: {e}"))?;
+            // Separate from the data directory on Linux and Windows, the same
+            // path on macOS — where this is then a no-op, having already run.
+            std::fs::create_dir_all(&config_dir).ok();
+            for name in migrate_identifier_dir(&config_dir, LEGACY_IDENTIFIER) {
+                tracing::info!(file = %name, "moved config over from the previous identifier");
+            }
 
             // Files staged for a share are meant to be momentary. Clear them at
             // startup so nothing — least of all a transcript — survives from a
@@ -338,7 +412,35 @@ pub fn run() {
                 });
             }
 
+            autostart::reconcile(handle, loaded_settings.start_at_login);
+
+            // Off the startup path deliberately. Reading a credential the old
+            // app owned makes macOS put up a modal prompt, and doing that
+            // inline parks `setup` inside SecKeychainFindGenericPassword until
+            // the user answers — no window, no menu bar icon, an app that looks
+            // hung. On its own thread the dialogs still appear together, but
+            // over a running app the user can see.
+            std::thread::Builder::new()
+                .name("desksec-credential-migration".into())
+                .spawn(secrets::migrate_legacy_credentials)
+                .ok();
+
             call_detect::CallDetector::spawn(handle.clone());
+
+            // Detection is only useful if the process outlives its window, so
+            // the app now lives in the menu bar. Built after the detector so a
+            // tray failure cannot stop detection from starting.
+            if let Err(e) = tray::install(handle) {
+                tracing::warn!("could not create the menu bar icon: {e}");
+            }
+
+            // A login start should not throw a window in the user's face; the
+            // point is that Minutes is already there when a call begins.
+            if tray::started_hidden() {
+                tracing::info!("started by the login item; staying in the menu bar");
+            } else {
+                tray::show_main_window(handle);
+            }
 
             Ok(())
         })
@@ -377,9 +479,41 @@ pub fn run() {
             prompt_window::start_recording_from_prompt,
             prompt_window::dismiss_meeting_prompt,
         ])
+        .on_window_event(|window, event| {
+            // Closing the main window hides it rather than ending the process:
+            // the call detector runs on a thread of its own and dies with the
+            // process, so quitting on close is what made detection stop the
+            // moment the window was dismissed.
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    tray::apply_activation_policy(window.app_handle());
+                }
+            }
+        })
         .build(tauri::generate_context!())
     {
-        Ok(app) => app.run(|_, _| {}),
+        Ok(app) => app.run(|app, event| {
+            // Windows and Linux end the process when the last window goes, and
+            // on macOS this also covers Cmd-Q. Quitting is deliberate only via
+            // the tray, which sets the flag before asking to exit.
+            match event {
+                // Windows and Linux end the process when the last window goes,
+                // and on macOS this also covers Cmd-Q. Quitting is deliberate
+                // only via the tray, which sets the flag before asking to exit.
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !tray::quit_requested() {
+                        api.prevent_exit();
+                        tray::apply_activation_policy(app);
+                    }
+                }
+                // Windows are only actually on screen by now, so this is the
+                // earliest point the Dock decision can be made correctly.
+                tauri::RunEvent::Ready => tray::apply_activation_policy(app),
+                _ => {}
+            }
+        }),
         Err(e) => report_fatal_startup_error(&e),
     }
 }
@@ -449,6 +583,116 @@ fn report_fatal_startup_error(e: &tauri::Error) -> ! {
 
 #[cfg(test)]
 mod tests {
+
+    /// Renaming the bundle identifier moves every per-identifier path with it.
+    /// These pin the recovery, because the failure mode is silent: the app
+    /// opens looking brand new, with the meetings still on disk next door.
+    mod identifier_migration {
+        use super::super::migrate_identifier_dir;
+
+        fn write(dir: &std::path::Path, name: &str, body: &str) {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+
+        #[test]
+        fn moves_an_old_identifier_directory_across() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "desksec.db", "meetings");
+            write(&old, "desksec.db-wal", "pending");
+            std::fs::create_dir_all(&new).unwrap();
+
+            let moved = migrate_identifier_dir(&new, "com.desksec.app");
+
+            assert_eq!(moved.len(), 2);
+            assert_eq!(
+                std::fs::read_to_string(new.join("desksec.db")).unwrap(),
+                "meetings"
+            );
+            // The sidecar matters: the database runs in WAL mode, and a main
+            // file without its -wal loses whatever that still held.
+            assert!(new.join("desksec.db-wal").exists());
+            assert!(!old.join("desksec.db").exists());
+        }
+
+        #[test]
+        fn never_overwrites_what_the_new_identifier_already_wrote() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "settings.json", "stale");
+            write(&new, "settings.json", "current");
+
+            let moved = migrate_identifier_dir(&new, "com.desksec.app");
+
+            assert!(moved.is_empty());
+            assert_eq!(
+                std::fs::read_to_string(new.join("settings.json")).unwrap(),
+                "current",
+                "a file written under the new identifier is the live one"
+            );
+        }
+
+        #[test]
+        fn is_a_no_op_once_it_has_run() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "desksec.db", "meetings");
+            std::fs::create_dir_all(&new).unwrap();
+
+            assert_eq!(migrate_identifier_dir(&new, "com.desksec.app").len(), 1);
+            // Runs on every launch, so the second one must find nothing to do
+            // rather than disturbing the database it moved a moment ago.
+            assert!(migrate_identifier_dir(&new, "com.desksec.app").is_empty());
+            assert_eq!(
+                std::fs::read_to_string(new.join("desksec.db")).unwrap(),
+                "meetings"
+            );
+        }
+
+        #[test]
+        fn the_emptied_legacy_directory_is_removed() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "desksec.db", "meetings");
+            std::fs::create_dir_all(&new).unwrap();
+
+            migrate_identifier_dir(&new, "com.desksec.app");
+
+            assert!(
+                !old.exists(),
+                "an empty folder named after the old brand should not be left in Application Support"
+            );
+        }
+
+        #[test]
+        fn a_legacy_directory_that_still_holds_something_is_left_alone() {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.desksec.app");
+            let new = root.path().join("com.minutes.app");
+            write(&old, "settings.json", "stale");
+            write(&new, "settings.json", "current");
+
+            migrate_identifier_dir(&new, "com.desksec.app");
+
+            // Nothing moved, because the new identifier already had that file.
+            // Deleting the directory here would throw away the only other copy.
+            assert!(old.join("settings.json").exists());
+        }
+
+        #[test]
+        fn a_fresh_install_has_nothing_to_migrate() {
+            let root = tempfile::tempdir().unwrap();
+            let new = root.path().join("com.minutes.app");
+            std::fs::create_dir_all(&new).unwrap();
+            assert!(migrate_identifier_dir(&new, "com.desksec.app").is_empty());
+        }
+    }
+
     use super::*;
 
     /// Regression cover for the develop merge that dropped the provider install

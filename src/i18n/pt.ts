@@ -386,6 +386,11 @@ export const pt: Translations = {
   "settings.telemetryDetail":
     "O que é enviado: contagens de utilização de funcionalidades, intervalos de duração, categorias de erro, versão da aplicação, sistema operativo e versão, tipo de CPU e número de núcleos, e um identificador de instalação aleatório que pode reiniciar. O que nunca é enviado: as suas gravações, transcrições, resumos, títulos de reuniões, nomes de participantes, caminhos de ficheiros, nem nada do que escreve ou diz. Se a aplicação estiver offline, os relatórios aguardam num pequeno ficheiro neste dispositivo e são enviados mais tarde. Os relatórios são guardados durante 12 meses. Desativar isto interrompe imediatamente qualquer envio, elimina o que ainda estiver a aguardar neste dispositivo e elimina o identificador de instalação.",
 
+  "settings.startAtLogin": "Iniciar ao iniciar sessão",
+  "settings.startAtLoginHint":
+    "Executa o Minutes em segundo plano desde o início de sessão, para que as reuniões sejam detetadas antes de abrir a aplicação.",
+  "settings.startAtLoginHintNoDetection":
+    "Executa o Minutes em segundo plano desde o início de sessão, para estar pronto de imediato. A deteção automática de reuniões não está disponível nesta plataforma.",
   "settings.serverUrl": "URL do servidor",
   "settings.serverUrlLocked":
     "Bloqueado — configurado na compilação pela CI ({url}).",
@@ -446,6 +451,8 @@ export const pt: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Essa reunião está a ser gravada — pare-a antes de a eliminar.",
+  "error.noTranscriptCheckLanguage":
+    "O áudio chega ao servidor, mas nada está a ser transcrito. Verifique o idioma de transcrição nas Definições — tem de corresponder ao idioma falado.",
   "error.meetingNotFound": "Essa reunião não foi encontrada.",
   "error.nothingToShare": "Ainda não há nada para partilhar nesta reunião.",
   "error.shareUnsupported": "A partilha para outra aplicação não está disponível nesta plataforma — guarde o ficheiro em vez disso.",

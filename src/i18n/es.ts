@@ -384,6 +384,11 @@ export const es: Translations = {
   "settings.telemetryDetail":
     "Qué se envía: recuentos de uso de funciones, rangos de duración, categorías de error, versión de la app, sistema operativo y versión, tipo de CPU y número de núcleos, y un identificador de instalación aleatorio que puedes restablecer. Qué nunca se envía: tus grabaciones, transcripciones, resúmenes, títulos de reunión, nombres de participantes, rutas de archivos ni nada de lo que escribas o digas. Si la app está sin conexión, los informes esperan en un archivo pequeño en este dispositivo y se envían más tarde. Los informes se conservan 12 meses. Desactivar esto detiene de inmediato todo envío, elimina lo que aún esté esperando en este dispositivo y elimina el identificador de instalación.",
 
+  "settings.startAtLogin": "Iniciar al iniciar sesión",
+  "settings.startAtLoginHint":
+    "Ejecuta Minutes en segundo plano desde el inicio de sesión para detectar reuniones antes de que abra la aplicación.",
+  "settings.startAtLoginHintNoDetection":
+    "Ejecuta Minutes en segundo plano desde el inicio de sesión para que esté listo de inmediato. La detección automática de reuniones no está disponible en esta plataforma.",
   "settings.serverUrl": "URL del servidor",
   "settings.serverUrlLocked":
     "Bloqueado: configurado en la compilación por CI ({url}).",
@@ -444,6 +449,8 @@ export const es: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Esa reunión se está grabando: deténla antes de eliminarla.",
+  "error.noTranscriptCheckLanguage":
+    "El audio llega al servidor, pero no se está transcribiendo nada. Compruebe el idioma de transcripción en Ajustes: debe coincidir con el idioma que se habla.",
   "error.meetingNotFound": "No se ha encontrado esa reunión.",
   "error.nothingToShare": "Todavía no hay nada que compartir de esta reunión.",
   "error.shareUnsupported": "Compartir con otra app no está disponible en esta plataforma: guarda el archivo en su lugar.",

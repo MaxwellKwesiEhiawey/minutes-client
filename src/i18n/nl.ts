@@ -391,6 +391,11 @@ export const nl: Translations = {
   "settings.telemetryDetail":
     "Wat wordt verstuurd: hoe vaak functies worden gebruikt, tijdsduurcategorieën, foutcategorieën, de versie van de app, het besturingssysteem en de versie ervan, het processortype en het aantal cores, en een willekeurige installatie-ID die je kunt vernieuwen. Wat nooit wordt verstuurd: je opnamen, transcripties, samenvattingen, vergadertitels, namen van deelnemers, bestandspaden, of iets van wat je typt of zegt. Is de app offline, dan wachten de rapporten in een klein bestand op dit apparaat en worden ze later verstuurd. Rapporten worden 12 maanden bewaard. Zet je dit uit, dan stopt alle verzending onmiddellijk, wordt alles wat nog op dit apparaat wacht verwijderd en wordt de installatie-ID verwijderd.",
 
+  "settings.startAtLogin": "Starten bij aanmelden",
+  "settings.startAtLoginHint":
+    "Voert Minutes vanaf het aanmelden op de achtergrond uit, zodat vergaderingen worden gedetecteerd voordat u de app opent.",
+  "settings.startAtLoginHintNoDetection":
+    "Voert Minutes vanaf het aanmelden op de achtergrond uit, zodat het meteen klaar is. Automatische vergaderdetectie is niet beschikbaar op dit platform.",
   "settings.serverUrl": "Server-URL",
   "settings.serverUrlLocked":
     "Vergrendeld — bij het bouwen ingesteld door CI ({url}).",
@@ -452,6 +457,8 @@ export const nl: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Die vergadering wordt opgenomen — stop die eerst voordat je verwijdert.",
+  "error.noTranscriptCheckLanguage":
+    "Audio bereikt de server, maar er wordt niets getranscribeerd. Controleer de transcriptietaal in Instellingen — die moet overeenkomen met de gesproken taal.",
   "error.meetingNotFound": "Die vergadering is niet gevonden.",
   "error.nothingToShare": "Er is voor deze vergadering nog niets om te delen.",
   "error.shareUnsupported": "Delen naar een andere app is op dit platform niet beschikbaar — sla het bestand in plaats daarvan op.",

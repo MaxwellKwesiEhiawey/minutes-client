@@ -26,6 +26,13 @@ function emittedCodes(): string[] {
     for (const m of source.matchAll(/coded(?:_with)?\(\s*"([^"]+)"/g)) {
       codes.add(m[1]);
     }
+    // Event payloads carry the same contract by hand, e.g. the live-stream
+    // warning emits json!({ "code": "error.x", … }). Those were invisible to
+    // the pattern above, so a missing translation there shipped silently —
+    // precisely the failure this file exists to prevent.
+    for (const m of source.matchAll(/"code":\s*"(error\.[^"]+)"/g)) {
+      codes.add(m[1]);
+    }
   }
   return [...codes].sort();
 }

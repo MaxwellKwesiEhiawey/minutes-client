@@ -39,6 +39,7 @@ vi.mock("./api", () => {
     call_detection_poll_interval_secs: 5,
     call_detection_apps: [],
     call_detection_supported: false,
+    start_at_login: false,
     onboarding_completed_version: 1,
     server_url_from_env: false,
     server_url_from_build: false,

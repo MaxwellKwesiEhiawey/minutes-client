@@ -94,6 +94,13 @@ pub struct Settings {
     /// name (e.g. `Spanish`). Empty = match the transcript / model default.
     #[serde(default)]
     pub summary_language: String,
+    /// Register a login item so the app is already running — and so already
+    /// detecting meetings — before anyone opens it. Opt-in: adding a login item
+    /// unasked is the kind of thing users resent, and on a managed fleet IT
+    /// wants that decision. `serde(default)` keeps existing settings.json files
+    /// loading, and existing users opted out on upgrade.
+    #[serde(default)]
+    pub start_at_login: bool,
     /// Generate a summary on its own as soon as a meeting finishes, instead of
     /// waiting for the user to ask. On by default: notes are the reason to
     /// record, and the manual button remains for regenerating.
@@ -243,6 +250,7 @@ impl Default for Settings {
             microphone_device: None,
             summary_instructions: String::new(),
             transcription_language: String::new(),
+            start_at_login: false,
             summary_language: String::new(),
             auto_summarize: true,
             // `0`, not the current version: a default-constructed Settings is
@@ -667,6 +675,7 @@ pub struct SettingsView {
     pub call_detection_poll_interval_secs: u64,
     pub call_detection_apps: Vec<String>,
     pub call_detection_supported: bool,
+    pub start_at_login: bool,
     /// Whether this platform has an OS share picker to hand a file to another
     /// app. A platform fact, not a stored preference, so it lives only on the
     /// view — the UI hides the action where it would not work.
@@ -713,7 +722,11 @@ impl Settings {
             call_detection_cooldown_minutes: self.call_detection_cooldown_minutes,
             call_detection_poll_interval_secs: self.call_detection_poll_interval_secs,
             call_detection_apps: self.call_detection_apps.clone(),
-            call_detection_supported: cfg!(target_os = "macos"),
+            // Windows detects native call apps through the microphone consent
+            // store; browser meetings remain macOS-only, since finding those
+            // needs AppleScript tab probing.
+            call_detection_supported: cfg!(any(target_os = "macos", target_os = "windows")),
+            start_at_login: self.start_at_login,
             share_supported: crate::share::supported(),
             telemetry_enabled: self.telemetry_enabled,
             server_url_from_env: url_env,
@@ -787,6 +800,29 @@ mod tests {
         assert_eq!(s.input_device.as_deref(), Some("Headset Mic"));
         assert!(!s.mix_microphone);
         assert_eq!(s.microphone_device, None);
+    }
+
+    #[test]
+    fn an_upgrade_does_not_silently_add_a_login_item() {
+        // The field postdates every install in the field, so its absence must
+        // read as "off". Defaulting the other way would register a launch agent
+        // on someone's machine because they installed an update.
+        let existing = r#"{"server_url":"https://example.test","whisper_model":"small"}"#;
+        let loaded: Settings = serde_json::from_str(existing).expect("old settings must load");
+        assert!(!loaded.start_at_login);
+    }
+
+    #[test]
+    fn an_explicit_choice_survives_a_round_trip() {
+        let chosen = Settings {
+            start_at_login: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&chosen).expect("serialize");
+        let back: Settings = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.start_at_login);
+        // And it reaches the UI, which is the only way the toggle can show it.
+        assert!(back.to_view().start_at_login);
     }
 
     #[test]

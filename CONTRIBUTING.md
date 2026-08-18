@@ -138,13 +138,25 @@ package name follows it too — so on those platforms Minutes installs **beside*
 an existing DeskSec rather than replacing it. macOS is unaffected (the bundle is
 identified by `identifier`, which deliberately did not change).
 
-The application `identifier` is still `com.desksec.app`, which is what keeps
-users' recordings, settings and keychain entries working across the rename. The
-side effect is that both installs resolve the *same* app-data directory and the
-same `desksec.db`. Concurrent access is guarded — `tauri-plugin-single-instance`
-means the second launch focuses the first window instead of opening the database
-twice — so the remaining symptom is a stale duplicate entry in Add/Remove
-Programs, not corruption.
+The application `identifier` is now `com.minutes.app`. It was deliberately left
+as `com.desksec.app` through the rename, because every per-identifier path and
+every keychain entry is derived from it — so changing it hides a user's
+recordings, settings and credentials rather than moving them. Both are now
+migrated on launch instead:
+
+- `migrate_identifier_dir` in `src-tauri/src/lib.rs` moves the app-data and
+  config directories over from `com.desksec.app`, entry by entry, skipping
+  anything already written under the new identifier. It runs every launch and
+  does nothing once there is nothing left to move.
+- `src-tauri/src/secrets.rs` reads through a list of legacy services and
+  migrates the first hit forward. The database key matters most: it has no
+  default to fall back on, so a missed migration would have `db::open_or_recover`
+  quarantine the database and start empty.
+
+Because the identifier moved, a DeskSec-era install no longer shares an app-data
+directory with a Minutes one on Windows and Linux; the stale Add/Remove Programs
+entry described above is unaffected, since that follows `productName` and the
+MSI `UpgradeCode`, not the identifier.
 
 To fix it properly, pin the upgrade code so the MSI keeps its old lineage:
 

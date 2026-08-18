@@ -18,7 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon`: the app keeps running after its window closes, so it needs a
+# menu-bar presence to be reopened or quit from.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -27,6 +29,7 @@ tauri-plugin-clipboard-manager = "2"
 # can quarantine the file another process holds open, and
 # `migrate_plaintext_to_encrypted` renames over the live path with no locking.
 tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -312,3 +315,8 @@ path = "src/main.rs"
 # toolchain available here; please confirm the next Windows CI run succeeds.
 [patch.crates-io]
 cpal = { git = "https://github.com/RustAudio/cpal", rev = "a62677dd811e39048e277e214fe22af75ecf6bf0" }
+
+# Reading the Capability Access Manager consent store, which is how Windows
+# reports that an application is currently using the microphone.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"

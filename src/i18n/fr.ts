@@ -391,6 +391,11 @@ export const fr: Translations = {
   "settings.telemetryDetail":
     "Ce qui est envoyé : le nombre d'utilisations des fonctionnalités, des plages de durée, des catégories d'erreur, la version de l'application, le système d'exploitation et sa version, le type de processeur et son nombre de cœurs, ainsi qu'un identifiant d'installation aléatoire que vous pouvez réinitialiser. Ce qui n'est jamais envoyé : vos enregistrements, transcriptions, résumés, titres de réunion, noms de participants, chemins de fichiers, ni rien de ce que vous tapez ou dites. Si l'application est hors ligne, les rapports attendent dans un petit fichier sur cet appareil et sont envoyés plus tard. Les rapports sont conservés 12 mois. Désactiver ceci arrête immédiatement tout envoi, supprime tout ce qui attend encore sur cet appareil et supprime l'identifiant d'installation.",
 
+  "settings.startAtLogin": "Lancer à l'ouverture de session",
+  "settings.startAtLoginHint":
+    "Exécute Minutes en arrière-plan dès l'ouverture de session afin de détecter les réunions avant que vous n'ouvriez l'application.",
+  "settings.startAtLoginHintNoDetection":
+    "Exécute Minutes en arrière-plan dès l'ouverture de session pour qu'il soit prêt immédiatement. La détection automatique des réunions n'est pas disponible sur cette plateforme.",
   "settings.serverUrl": "URL du serveur",
   "settings.serverUrlLocked":
     "Verrouillé — configuré au moment de la compilation par la CI ({url}).",
@@ -451,6 +456,8 @@ export const fr: Translations = {
 
   /* ---------------- Errors the backend asks us to show ---------------- */
   "error.deleteWhileRecording": "Cette réunion est en cours d'enregistrement — arrêtez-la avant de la supprimer.",
+  "error.noTranscriptCheckLanguage":
+    "L'audio parvient au serveur mais rien n'est transcrit. Vérifiez la langue de transcription dans les Réglages : elle doit correspondre à la langue parlée.",
   "error.meetingNotFound": "Cette réunion est introuvable.",
   "error.nothingToShare": "Il n'y a encore rien à partager pour cette réunion.",
   "error.shareUnsupported": "Le partage vers une autre application n'est pas disponible sur cette plateforme — enregistrez le fichier à la place.",
