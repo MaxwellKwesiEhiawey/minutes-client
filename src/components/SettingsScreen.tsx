@@ -318,6 +318,15 @@ export function SettingsScreen({
 
   const isWhisper = transcriptionEngine === "whisper";
 
+  // An online install may still hold the empty value from when
+  // "Auto-detect" was offered for every engine. Show it as English —
+  // what the server actually does with an absent language — rather than
+  // leaving the select blank on a value no option matches. Display-only
+  // on purpose: the stored value is left alone, so switching back to
+  // Whisper restores real detection instead of having been rewritten.
+  const languageSelectValue =
+    !isWhisper && transcriptionLanguage === "" ? "en" : transcriptionLanguage;
+
   const selectedModelReady = isWhisper
     ? modelStatus?.model === whisperModel && Boolean(modelStatus?.model_ready)
     : Boolean(modelStatus?.model_ready);
@@ -1093,10 +1102,17 @@ export function SettingsScreen({
               >
                 <select
                   id="transcription-language"
-                  value={transcriptionLanguage}
+                  value={languageSelectValue}
                   onChange={(e) => setTranscriptionLanguage(e.target.value)}
                 >
-                  <option value="">{t("settings.autoDetect")}</option>
+                  {/* Only Whisper actually detects the spoken language. The online
+                      engine ignores an absent language and falls back to English, so
+                      offering "Auto-detect" there promises something it does not do —
+                      and the failure is silent: non-English speech transcribes to
+                      nothing at all. */}
+                  {isWhisper && (
+                    <option value="">{t("settings.autoDetect")}</option>
+                  )}
                   {LANGUAGES.map((l) => (
                     <option key={l.code} value={l.code}>
                       {l.name}
