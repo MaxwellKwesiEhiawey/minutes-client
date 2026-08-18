@@ -110,6 +110,42 @@ pub fn set_token(token: &str) -> Result<()> {
     set_secret(ACCOUNT_TOKEN, token)
 }
 
+/// Move every credential still sitting under a previous service or account name.
+///
+/// Reading a legacy item is what makes macOS show its "wants to use your
+/// confidential information stored in com.desksec.app" prompt, since the
+/// renamed app no longer matches the ACL those items were created with. That
+/// cost is unavoidable, but its *timing* is not: doing them together at startup
+/// means a user answers the dialogs once, in one burst, instead of meeting them
+/// one at a time over following weeks.
+///
+/// It also reaches entries nothing else would. `get_api_url` is only consulted
+/// when no URL was baked in at build time, so on a CI build the old
+/// `desksec-server-url` would otherwise stay in Keychain Access forever.
+///
+/// Values are deliberately not returned or logged — only whether something
+/// moved. Safe to call on every launch: once nothing is left, each lookup is a
+/// miss and no prompt appears.
+///
+/// Must not run on the startup path. Each read can block inside
+/// `SecKeychainFindGenericPassword` until the user answers, so calling it
+/// inline leaves the app with no window and no menu bar icon while it waits.
+pub fn migrate_legacy_credentials() {
+    let checks: [(&str, Result<Option<String>>); 4] = [
+        ("server token", get_token()),
+        ("server URL", get_api_url()),
+        ("device token", get_device_token()),
+        ("device id", get_device_id()),
+    ];
+    for (label, result) in checks {
+        match result {
+            Ok(Some(_)) => tracing::debug!("{label} available under the current name"),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("could not check the {label} while migrating: {e}"),
+        }
+    }
+}
+
 /// Read this install's device token from the OS credential store.
 ///
 /// Falls back to the `com.desksec.app` service, but not to the parley-era one:

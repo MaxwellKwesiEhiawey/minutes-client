@@ -414,6 +414,17 @@ pub fn run() {
 
             autostart::reconcile(handle, loaded_settings.start_at_login);
 
+            // Off the startup path deliberately. Reading a credential the old
+            // app owned makes macOS put up a modal prompt, and doing that
+            // inline parks `setup` inside SecKeychainFindGenericPassword until
+            // the user answers — no window, no menu bar icon, an app that looks
+            // hung. On its own thread the dialogs still appear together, but
+            // over a running app the user can see.
+            std::thread::Builder::new()
+                .name("desksec-credential-migration".into())
+                .spawn(secrets::migrate_legacy_credentials)
+                .ok();
+
             call_detect::CallDetector::spawn(handle.clone());
 
             // Detection is only useful if the process outlives its window, so
