@@ -477,6 +477,8 @@ export const en = {
   "error.exportExtension": "That file type is not one Minutes can write.",
   "error.stopBeforeDeletingModels": "Stop recording before deleting models.",
   "error.serverTokenMissing": "The Minutes server access token isn't set up. Check Settings, or contact IT.",
+  "error.deviceRevoked":
+    "This device's access has been revoked. Contact your IT team to have it restored.",
   "error.serverRejectedToken": "The Minutes server rejected the access token. Check Settings, or contact IT.",
   "error.onlineNotConfiguredOnServer": "Online transcription isn't configured on the Minutes server. Contact IT.",
   "error.unknownBrowser": "That browser is not one Minutes can detect meetings in.",

@@ -126,6 +126,10 @@ impl From<crate::summary::SummaryError> for CategorizedError {
                 ErrorKind::Auth,
                 "The summarization server rejected the request (unauthorized). Check your Minutes access token in Settings.",
             ),
+            SummaryError::DeviceRevoked => CategorizedError::coded(
+                "error.deviceRevoked",
+                "This device's access has been revoked. Contact your IT team.",
+            ),
             SummaryError::Server(msg) => CategorizedError::new(ErrorKind::Server, msg),
         }
     }

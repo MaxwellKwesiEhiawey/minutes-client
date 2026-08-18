@@ -469,6 +469,8 @@ export const fr: Translations = {
   "error.stopBeforeDeletingModels": "Arrêtez l'enregistrement avant de supprimer des modèles.",
 
   "error.serverTokenMissing": "Le jeton d'accès au serveur Minutes n'est pas configuré. Vérifiez les Réglages ou contactez le service informatique.",
+  "error.deviceRevoked":
+    "L'accès de cet appareil a été révoqué. Contactez votre service informatique pour le rétablir.",
   "error.serverRejectedToken": "Le serveur Minutes a refusé le jeton d'accès. Vérifiez les Réglages ou contactez le service informatique.",
   "error.onlineNotConfiguredOnServer": "La transcription en ligne n'est pas configurée sur le serveur Minutes. Contactez le service informatique.",
   "error.unknownBrowser": "Minutes ne peut pas détecter de réunions dans ce navigateur.",

@@ -155,7 +155,20 @@ fn handshake_unauthorized<T>(result: &Result<T, tokio_tungstenite::tungstenite::
     matches!(
         result,
         Err(tokio_tungstenite::tungstenite::Error::Http(resp))
-            if resp.status() == 401 || resp.status() == 403
+            if resp.status() == 401
+    )
+}
+
+/// Whether the server recognised this device and refused it.
+///
+/// Kept apart from [`handshake_unauthorized`] because that one triggers a
+/// re-registration: a revoked device taking the same path would enrol itself
+/// again and undo the revocation.
+fn handshake_revoked<T>(result: &Result<T, tokio_tungstenite::tungstenite::Error>) -> bool {
+    matches!(
+        result,
+        Err(tokio_tungstenite::tungstenite::Error::Http(resp))
+            if resp.status() == 403
     )
 }
 
@@ -241,6 +254,19 @@ pub async fn run_live_stream(
                 attempt = connect_async(retry).await;
             }
         }
+    }
+
+    if handshake_revoked(&attempt) {
+        tracing::warn!("live stream refused: this device has been revoked");
+        let _ = app.emit(
+            EV_ERROR,
+            json!({
+                "meetingId": meeting_id,
+                "code": "error.deviceRevoked",
+                "message": "This device's access has been revoked. Contact your IT team.",
+            }),
+        );
+        return;
     }
 
     let (ws_stream, _resp) = match attempt {
@@ -485,6 +511,44 @@ mod tests {
             stream_ws_url("https://api.example", true, "en&diarize=false").unwrap(),
             "wss://api.example/v1/transcribe/stream?diarize=true&language=en%26diarize%3Dfalse"
         );
+    }
+
+    /// Only an unrecognised token may trigger a re-registration. A revoked
+    /// device taking that path would enrol itself again and undo the
+    /// revocation — the defect this pair of predicates exists to prevent.
+    #[test]
+    fn only_an_unknown_token_earns_a_retry() {
+        use tokio_tungstenite::tungstenite::{
+            http::{Response, StatusCode},
+            Error,
+        };
+
+        // Returns the error rather than a Result: tungstenite::Error is 136
+        // bytes, and clippy's `result_large_err` — denied in CI — rejects
+        // handing one back by value.
+        fn refusal(code: StatusCode) -> Error {
+            Error::Http(Response::builder().status(code).body(None).unwrap())
+        }
+
+        let unknown: Result<(), Error> = Err(refusal(StatusCode::UNAUTHORIZED));
+        assert!(handshake_unauthorized(&unknown), "401 means re-register");
+        assert!(!handshake_revoked(&unknown));
+
+        let revoked: Result<(), Error> = Err(refusal(StatusCode::FORBIDDEN));
+        assert!(
+            !handshake_unauthorized(&revoked),
+            "403 must never trigger a re-registration"
+        );
+        assert!(handshake_revoked(&revoked));
+
+        // A server that is simply broken is neither.
+        let broken: Result<(), Error> = Err(refusal(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(!handshake_unauthorized(&broken));
+        assert!(!handshake_revoked(&broken));
+
+        let fine: Result<(), Error> = Ok(());
+        assert!(!handshake_unauthorized(&fine));
+        assert!(!handshake_revoked(&fine));
     }
 
     #[test]
