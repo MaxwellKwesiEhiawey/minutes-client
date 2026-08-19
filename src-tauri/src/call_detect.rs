@@ -614,6 +614,21 @@ fn config_app_aliases(config_app: &str) -> Vec<&'static str> {
         // is Zoom.exe, which `process_name_matches_config_app` reaches through
         // the "Zoom." prefix rule rather than an exact match.
         "zoom.us" | "Zoom" => vec!["zoom.us", "Zoom"],
+        // Packaged Store builds are recorded by package family name, so the
+        // consent store reports `5319275A.WhatsAppDesktop` and never an .exe
+        // the "WhatsApp." prefix rule could reach.
+        "WhatsApp" => vec!["WhatsApp", "5319275A.WhatsAppDesktop"],
+        // None of Webex's Windows processes are called "Webex": the Webex App
+        // runs CiscoCollabHost.exe and Webex Meetings hands audio to atmgr.exe.
+        // Any of them holding the microphone means a Webex call is live, so
+        // they are all treated as the same configured app.
+        "Webex" => vec![
+            "Webex",
+            "Cisco Webex Meetings",
+            "CiscoCollabHost",
+            "webexhost",
+            "atmgr",
+        ],
         _ => vec![],
     }
 }
@@ -1130,6 +1145,19 @@ mod tests {
         assert!(process_name_matches_config_app("MSTeams", "MSTeams"));
         assert!(process_name_matches_config_app("Slack", "slack.exe"));
         assert!(process_name_matches_config_app("WhatsApp", "WhatsApp.exe"));
+        // Store builds are named by package family rather than by executable,
+        // so the prefix rule cannot reach them.
+        assert!(process_name_matches_config_app(
+            "WhatsApp",
+            "5319275A.WhatsAppDesktop"
+        ));
+        // Webex's processes carry neither the product name nor a "Webex."
+        // prefix, so they need naming outright.
+        assert!(process_name_matches_config_app(
+            "Webex",
+            "CiscoCollabHost.exe"
+        ));
+        assert!(process_name_matches_config_app("Webex", "atmgr.exe"));
     }
 
     #[test]
@@ -1171,6 +1199,8 @@ mod tests {
             "Microsoft Teams",
             "MSTeams"
         ));
+        assert!(process_name_matches_config_app("Webex", "Webex"));
+        assert!(process_name_matches_config_app("WhatsApp", "WhatsApp"));
     }
 
     #[test]

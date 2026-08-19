@@ -204,7 +204,11 @@ fn default_partial_secs() -> f32 {
 }
 
 fn default_call_detection_enabled() -> bool {
-    cfg!(target_os = "macos")
+    // On wherever it works. `call_detection_supported` already reports Windows
+    // as supported, but leaving this macOS-only shipped the feature switched
+    // off there: `CallDetector::run_loop` returns early while `!enabled`, so the
+    // detector polled forever without ever reading the consent store.
+    cfg!(any(target_os = "macos", target_os = "windows"))
 }
 
 fn default_call_detection_cooldown_minutes() -> u64 {
