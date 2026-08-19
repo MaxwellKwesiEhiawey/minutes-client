@@ -459,6 +459,8 @@ export const nl: Translations = {
   "error.deleteWhileRecording": "Die vergadering wordt opgenomen — stop die eerst voordat je verwijdert.",
   "error.noTranscriptCheckLanguage":
     "Audio bereikt de server, maar er wordt niets getranscribeerd. Controleer de transcriptietaal in Instellingen — die moet overeenkomen met de gesproken taal.",
+  "error.noAudioCaptured":
+    "Er wordt geen geluid opgepikt. Controleer of het juiste invoerapparaat is geselecteerd en niet gedempt is — en als de vergadering via je luidsprekers speelt, is een systeemaudiobron nodig.",
   "error.meetingNotFound": "Die vergadering is niet gevonden.",
   "error.nothingToShare": "Er is voor deze vergadering nog niets om te delen.",
   "error.shareUnsupported": "Delen naar een andere app is op dit platform niet beschikbaar — sla het bestand in plaats daarvan op.",

@@ -460,6 +460,8 @@ export const it: Translations = {
   "error.deleteWhileRecording": "Quella riunione è in registrazione: interrompila prima di eliminarla.",
   "error.noTranscriptCheckLanguage":
     "L'audio raggiunge il server ma non viene trascritto nulla. Controlla la lingua di trascrizione nelle Impostazioni: deve corrispondere alla lingua parlata.",
+  "error.noAudioCaptured":
+    "Non viene rilevato alcun audio. Verifica che sia selezionato il dispositivo di ingresso corretto e che non sia disattivato; se la riunione passa dagli altoparlanti, serve una sorgente audio di sistema.",
   "error.meetingNotFound": "Quella riunione non è stata trovata.",
   "error.nothingToShare": "Per questa riunione non c'è ancora nulla da condividere.",
   "error.shareUnsupported": "La condivisione con un'altra app non è disponibile su questa piattaforma: salva il file invece.",

@@ -20,6 +20,12 @@ const EV_LEVEL: &str = "audio-level";
 /// is told. Twenty seconds is long enough not to fire between "hello" and the
 /// first result, short enough that nobody records a whole meeting into silence.
 const NO_TRANSCRIPT_WARN_MS: u64 = 20_000;
+
+/// How much capture may go by without a single audible batch before the user is
+/// told nothing is being picked up. Deliberately longer than
+/// [`NO_TRANSCRIPT_WARN_MS`]: quiet at the top of a meeting is ordinary, an
+/// input that never once rises above the noise floor is not.
+const NO_AUDIO_WARN_MS: u64 = 45_000;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_tungstenite::{
     connect_async,
@@ -119,17 +125,46 @@ fn persist_final_line(
 /// It counts voiced audio rather than elapsed time on purpose: someone who
 /// starts recording and sits quietly for twenty seconds has nothing wrong with
 /// their setup, and a warning they learn to dismiss is worse than none.
+///
+/// It also watches the opposite failure, which looks identical from the UI: no
+/// audible audio arriving in the first place. A microphone the OS has stopped
+/// authorising still opens and still delivers buffers — they are just all
+/// zeroes — so "nothing transcribed" and "nothing captured" need telling apart
+/// or the user is sent to check the wrong setting.
 #[derive(Debug, Default)]
 struct SilenceWatch {
     voiced_ms: u64,
     heard: bool,
     warned: bool,
+    /// Capture accumulated while nothing audible has yet arrived.
+    silent_ms: u64,
+    /// Set by the first audible batch, or by having warned already; either way
+    /// the capture question is answered and stays answered.
+    audio_settled: bool,
 }
 
 impl SilenceWatch {
     /// Note that the server sent back a transcript; disarms the warning.
     fn heard_transcript(&mut self) {
         self.heard = true;
+    }
+
+    /// Feed one captured batch. Returns true exactly once, on the batch that
+    /// pushes capture past the threshold without a single audible sample.
+    fn observe_capture(&mut self, batch_ms: u64, voiced: bool) -> bool {
+        if self.audio_settled {
+            return false;
+        }
+        if voiced {
+            self.audio_settled = true;
+            return false;
+        }
+        self.silent_ms += batch_ms;
+        if self.silent_ms >= NO_AUDIO_WARN_MS {
+            self.audio_settled = true;
+            return true;
+        }
+        false
     }
 
     /// Feed one captured batch. Returns true exactly once, on the batch that
@@ -356,7 +391,20 @@ pub async fn run_live_stream(
             watch.heard_transcript();
         }
         let batch_ms = (batch.len() as u64 * 1000) / sample_rate.max(1) as u64;
-        if watch.observe(batch_ms, !crate::audio::is_mostly_silent(&batch)) {
+        let voiced = !crate::audio::is_mostly_silent(&batch);
+        if watch.observe_capture(batch_ms, voiced) {
+            tracing::warn!("no audible audio after {NO_AUDIO_WARN_MS}ms of capture");
+            let _ = app.emit(
+                EV_ERROR,
+                json!({
+                    "meetingId": meeting_id,
+                    "code": "error.noAudioCaptured",
+                    // Fallback for a build whose dictionary predates this code.
+                    "message": "No audio is being picked up. Check that the right input device is selected and not muted — and if the meeting is playing through your speakers, a system-audio source is needed to capture it.",
+                }),
+            );
+        }
+        if watch.observe(batch_ms, voiced) {
             let language = match settings.transcription_language.trim() {
                 "" => "auto".to_string(),
                 other => other.to_string(),
@@ -474,6 +522,61 @@ mod tests {
         for _ in 0..300 {
             assert!(!w.observe(SEC, true));
         }
+    }
+
+    #[test]
+    fn capture_that_is_never_audible_warns() {
+        let mut w = SilenceWatch::default();
+        let threshold_secs = NO_AUDIO_WARN_MS / SEC;
+        for _ in 0..threshold_secs - 1 {
+            assert!(
+                !w.observe_capture(SEC, false),
+                "must not warn before the threshold"
+            );
+        }
+        assert!(w.observe_capture(SEC, false));
+    }
+
+    #[test]
+    fn one_audible_batch_disarms_the_capture_warning() {
+        let mut w = SilenceWatch::default();
+        for _ in 0..NO_AUDIO_WARN_MS / SEC / 2 {
+            w.observe_capture(SEC, false);
+        }
+        // Someone finally speaks: the input is alive, so a later quiet stretch
+        // must not accuse it of being dead.
+        assert!(!w.observe_capture(SEC, true));
+        for _ in 0..300 {
+            assert!(!w.observe_capture(SEC, false));
+        }
+    }
+
+    #[test]
+    fn capture_warns_only_once_per_stream() {
+        let mut w = SilenceWatch::default();
+        let mut warnings = 0;
+        for _ in 0..300 {
+            if w.observe_capture(SEC, false) {
+                warnings += 1;
+            }
+        }
+        assert_eq!(warnings, 1, "a repeating toast is worse than no toast");
+    }
+
+    #[test]
+    fn the_two_watches_are_independent() {
+        let mut w = SilenceWatch::default();
+        // Voiced audio going out with nothing coming back is the transcript
+        // problem, not the capture one — only the former may fire.
+        let mut capture_warnings = 0;
+        for _ in 0..NO_AUDIO_WARN_MS / SEC + 10 {
+            if w.observe_capture(SEC, true) {
+                capture_warnings += 1;
+            }
+            w.observe(SEC, true);
+        }
+        assert_eq!(capture_warnings, 0);
+        assert!(w.warned, "the no-transcript warning should still have run");
     }
 
     #[test]

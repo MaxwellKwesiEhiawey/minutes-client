@@ -453,6 +453,8 @@ export const pt: Translations = {
   "error.deleteWhileRecording": "Essa reunião está a ser gravada — pare-a antes de a eliminar.",
   "error.noTranscriptCheckLanguage":
     "O áudio chega ao servidor, mas nada está a ser transcrito. Verifique o idioma de transcrição nas Definições — tem de corresponder ao idioma falado.",
+  "error.noAudioCaptured":
+    "Não está a ser captado áudio. Verifique se o dispositivo de entrada correto está selecionado e sem som desativado — e se a reunião estiver a tocar nas colunas, é necessária uma fonte de áudio do sistema.",
   "error.meetingNotFound": "Essa reunião não foi encontrada.",
   "error.nothingToShare": "Ainda não há nada para partilhar nesta reunião.",
   "error.shareUnsupported": "A partilha para outra aplicação não está disponível nesta plataforma — guarde o ficheiro em vez disso.",

@@ -458,6 +458,8 @@ export const fr: Translations = {
   "error.deleteWhileRecording": "Cette réunion est en cours d'enregistrement — arrêtez-la avant de la supprimer.",
   "error.noTranscriptCheckLanguage":
     "L'audio parvient au serveur mais rien n'est transcrit. Vérifiez la langue de transcription dans les Réglages : elle doit correspondre à la langue parlée.",
+  "error.noAudioCaptured":
+    "Aucun son n'est capté. Vérifiez que le bon périphérique d'entrée est sélectionné et non coupé — et si la réunion passe par vos haut-parleurs, une source audio système est nécessaire.",
   "error.meetingNotFound": "Cette réunion est introuvable.",
   "error.nothingToShare": "Il n'y a encore rien à partager pour cette réunion.",
   "error.shareUnsupported": "Le partage vers une autre application n'est pas disponible sur cette plateforme — enregistrez le fichier à la place.",

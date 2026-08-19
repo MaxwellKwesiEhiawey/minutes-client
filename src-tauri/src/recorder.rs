@@ -88,6 +88,26 @@ pub fn start(app: &AppHandle, title: Option<String>) -> Result<Meeting, String> 
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<f32>>();
 
+    // macOS ties the microphone grant to the bundle identity, so a rename or a
+    // re-signed build silently drops it. CoreAudio then still opens the device
+    // and still delivers buffers — all zeroes — which reads downstream as a
+    // recording that simply transcribes to nothing. Record the real
+    // authorization state here so that case is legible in the log instead of
+    // being inferred from empty output an hour later.
+    if settings.capture_microphone {
+        let mic = crate::permissions::microphone_state();
+        tracing::info!("microphone permission at record start: {mic:?}");
+        if matches!(
+            mic,
+            crate::permissions::PermissionState::Denied
+                | crate::permissions::PermissionState::NotDetermined
+        ) {
+            tracing::warn!(
+                "microphone is not authorised; captured audio will be silent until access is granted"
+            );
+        }
+    }
+
     let sources = capture_sources(&settings)?;
 
     // Capture notices can fire before the meeting row exists (during the initial
